@@ -98,9 +98,6 @@
     <main class="main-body">
       <p class="verse">오라 우리가 여호와께 노래하며 우리 구원의 반석을 향하여 <b>즐거이</b> 부르자 <span class="verse-ref">(시 95:1)</span></p>
 
-      <!-- 중고등부 팀 빙고 입장 (권한자/관리자만 입장 가능 — 클릭 시 판정) -->
-      <button type="button" class="btn-mg-enter" onclick="openMgView()">🎒 중고등부 빙고</button>
-
       <!-- 내 진행 상황 요약 -->
       <div class="my-stats">
         <div class="stat"><span class="stat-num" id="statBingos">0</span><span class="stat-label">빙고</span></div>
@@ -128,6 +125,8 @@
     </footer>
 
     <!-- 채팅 열기 버튼 (청년회 메인 전용) -->
+    <!-- 중고등부 팀 빙고 입장 (권한자/관리자만 입장 가능 — 클릭 시 판정), 왼쪽 하단 플로팅 -->
+    <button type="button" id="mgFab" class="btn-mg-enter" onclick="openMgView()">🎒 중고등부</button>
     <button type="button" id="chatFab" class="chat-fab" onclick="openChatPanel()" aria-label="채팅 열기">💬</button>
   </section>
 

@@ -731,27 +731,29 @@ body {
    중고등부(팀 빙고)
    ========================================================== */
 
-/* 메인의 중고등부 입장 버튼 */
+/* 메인의 중고등부 입장 버튼 — 왼쪽 하단 플로팅(채팅 버튼과 대칭) */
 .btn-mg-enter {
-  display: block;
-  width: 100%;
-  max-width: 340px;
-  margin: 12px auto 0;
-  padding: 12px 18px;
+  position: fixed;
+  left: 16px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 54px;
+  padding: 0 18px;
   border: none;
-  border-radius: 14px;
-  background: rgba(255,255,255,0.92);
-  color: var(--navy);
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
   font-family: inherit;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   font-weight: 800;
-  box-shadow: var(--shadow);
+  box-shadow: 0 6px 18px rgba(20,45,90,0.35);
   cursor: pointer;
-  transition: transform 0.1s, box-shadow 0.15s;
+  transition: transform 0.1s, background 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
-.btn-mg-enter:hover { box-shadow: 0 6px 18px rgba(20,45,90,0.24); }
-.btn-mg-enter:active { transform: scale(0.97); }
+.btn-mg-enter:hover { background: var(--blue-deep); }
+.btn-mg-enter:active { transform: scale(0.96); }
 
 /* 팀 표시 바 (팀 배지 + 관리자 A/B 토글) */
 .mg-team-bar {
@@ -944,7 +946,7 @@ body {
 
 /* ---------- 다크모드 (중고등부 + 채팅) ---------- */
 @media (prefers-color-scheme: dark) {
-  .btn-mg-enter { background: rgba(30, 38, 52, 0.92); color: #dbe6ff; }
+  .btn-mg-enter { background: var(--blue); color: #fff; }
   .mg-team-indicator { background: rgba(30, 38, 52, 0.92); color: #9db8ee; }
   .mg-team-indicator.team-b { color: #f48fb6; }
   .mg-team-done-note { background: #24402a; color: #9be08f; }
