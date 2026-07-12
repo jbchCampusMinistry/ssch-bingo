@@ -261,15 +261,15 @@ body {
 }
 .cell.done .check-mark { display: block; }
 
-/* 중앙(12번) 하트 칸 — 핑크 하트 강조 (실제 미션, 프리칸 아님) */
-.cell.center { background: transparent; box-shadow: none; color: var(--red); font-weight: 800; }
+/* 중앙(12번) 하트 칸 — 다른 칸처럼 흰 박스 + 안쪽에 핑크 하트 배경 (실제 미션, 프리칸 아님) */
+.cell.center { color: #d1215a; font-weight: 800; }   /* 흰 박스/그림자/라운드는 .cell 기본값 그대로 사용 */
 .cell.center .heart-bg {
-  position: absolute; inset: -2%; z-index: 1;
-  filter: drop-shadow(0 3px 6px rgba(20,45,90,0.2));
+  position: absolute; inset: 10%; z-index: 1; opacity: 0.6;
 }
 .cell.center .heart-bg path { fill: var(--pink-soft); transition: fill 0.25s; }
+.cell.center.done { background: linear-gradient(160deg, #ffe6f0 0%, #ffc9df 100%); color: #b3123a; }
+.cell.center.done .heart-bg { opacity: 0.9; }
 .cell.center.done .heart-bg path { fill: var(--pink); }
-.cell.center.done { color: #b3123a; }
 .cell.center .check-mark { background: var(--red); }
 
 /* 관리자에게 체크 해제된 칸 — 색이 풀리고 알림 점 표시 */
