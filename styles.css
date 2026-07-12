@@ -726,3 +726,231 @@ body {
   .test-check-info { color: #dbe6ff; }
   .gi-test-ph { background: #333c4b; color: #98a3b6; }
 }
+
+/* ==========================================================
+   중고등부(팀 빙고)
+   ========================================================== */
+
+/* 메인의 중고등부 입장 버튼 */
+.btn-mg-enter {
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  margin: 12px auto 0;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.92);
+  color: var(--navy);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 800;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-mg-enter:hover { box-shadow: 0 6px 18px rgba(20,45,90,0.24); }
+.btn-mg-enter:active { transform: scale(0.97); }
+
+/* 팀 표시 바 (팀 배지 + 관리자 A/B 토글) */
+.mg-team-bar {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.mg-team-indicator {
+  background: rgba(255,255,255,0.92);
+  color: var(--blue-deep);
+  font-size: 0.82rem; font-weight: 900;
+  border-radius: 999px;
+  padding: 6px 16px;
+  box-shadow: var(--shadow);
+}
+.mg-team-indicator.team-b { color: #d1215a; }
+
+.mg-team-toggle {
+  display: inline-flex;
+  background: rgba(255,255,255,0.35);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.mg-team-toggle button {
+  border: none; border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font-family: inherit; font-size: 0.78rem; font-weight: 800;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mg-team-toggle button.active { background: #fff; color: var(--blue-deep); }
+
+/* 팀 선택 모달의 큰 A/B 버튼 */
+.mg-team-pick {
+  display: flex; gap: 12px; justify-content: center;
+  margin-top: 18px;
+}
+.btn-team {
+  flex: 1; max-width: 140px;
+  border: none; border-radius: 16px;
+  padding: 22px 10px;
+  font-family: inherit; font-size: 1.3rem; font-weight: 900;
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.1s, opacity 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-team:active { transform: scale(0.96); }
+.btn-team-a { background: var(--blue); }
+.btn-team-a:hover { background: var(--blue-deep); }
+.btn-team-b { background: var(--pink); }
+.btn-team-b:hover { background: #e8659a; }
+
+/* 미션 모달 — "팀원이 이미 완료" 안내 */
+.mg-team-done-note {
+  color: #2e7d32;
+  background: #e9f7e6;
+  border-radius: 10px;
+  font-size: 0.8rem; font-weight: 700;
+  padding: 8px 12px;
+  margin: 4px 0 10px;
+  word-break: keep-all;
+}
+
+/* 관리자 패널 — 중고등부 지정 버튼 / 팀 미니 선택 */
+.btn-grant-mg { background: var(--teal-deep); }
+.btn-grant-mg:hover { background: #23997f; }
+
+.mg-team-mini { display: inline-flex; gap: 3px; }
+.btn-team-mini {
+  width: 26px; height: 26px;
+  border: 1px solid #d3dae5;
+  border-radius: 8px;
+  background: #fff; color: #8a93a3;
+  font-family: inherit; font-size: 0.72rem; font-weight: 900;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-team-mini.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn-team-mini.active:last-child { background: var(--pink); border-color: var(--pink); }
+
+/* ==========================================================
+   채팅 (청년회 메인, 카카오톡 스타일)
+   ========================================================== */
+
+/* 우하단 떠 있는 채팅 버튼 */
+.chat-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  width: 54px; height: 54px;
+  border: none; border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 1.45rem;
+  box-shadow: 0 6px 18px rgba(20,45,90,0.35);
+  cursor: pointer;
+  transition: transform 0.1s, background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.chat-fab:hover { background: var(--blue-deep); }
+.chat-fab:active { transform: scale(0.94); }
+
+/* 채팅 패널 — 아래에서 올라오는 시트 느낌 */
+.chat-overlay { align-items: flex-end; padding: 0; }
+.modal-chat {
+  max-width: 560px;
+  border-radius: 22px 22px 0 0;
+  max-height: 78vh;
+  padding: 22px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column;
+  overflow-y: hidden;
+}
+
+/* 메시지 목록 */
+.chat-messages {
+  flex: 1;
+  min-height: 200px;
+  max-height: 52vh;
+  overflow-y: auto;
+  margin-top: 12px;
+  padding: 6px 4px;
+  display: flex; flex-direction: column; gap: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chat-msg { display: flex; flex-direction: column; max-width: 82%; }
+.chat-msg.me { align-self: flex-end; align-items: flex-end; }
+.chat-msg.other { align-self: flex-start; align-items: flex-start; }
+
+.chat-nick {
+  font-size: 0.72rem; font-weight: 800;
+  color: var(--navy);
+  margin: 0 4px 3px;
+}
+
+.chat-row { display: flex; align-items: flex-end; gap: 5px; }
+
+.chat-bubble {
+  padding: 8px 12px;
+  border-radius: 16px;
+  font-size: 0.88rem; font-weight: 500;
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.chat-msg.me .chat-bubble {
+  background: var(--blue); color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.chat-msg.other .chat-bubble {
+  background: #f0f2f6; color: var(--text);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-time { font-size: 0.62rem; color: #98a3b6; flex-shrink: 0; }
+
+/* 입력줄 */
+.chat-input-row {
+  display: flex; gap: 8px;
+  margin-top: 10px;
+  flex-shrink: 0;
+}
+.chat-input {
+  flex: 1; min-width: 0;
+  padding: 11px 14px;
+  border: 2px solid #dfe4ec;
+  border-radius: 999px;
+  font-family: inherit; font-size: 0.9rem; font-weight: 500;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.chat-input:focus { border-color: var(--blue); }
+.btn-chat-send {
+  border: none; border-radius: 999px;
+  background: var(--blue); color: #fff;
+  font-family: inherit; font-size: 0.85rem; font-weight: 800;
+  padding: 0 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.1s;
+}
+.btn-chat-send:hover { background: var(--blue-deep); }
+.btn-chat-send:active { transform: scale(0.96); }
+
+/* ---------- 다크모드 (중고등부 + 채팅) ---------- */
+@media (prefers-color-scheme: dark) {
+  .btn-mg-enter { background: rgba(30, 38, 52, 0.92); color: #dbe6ff; }
+  .mg-team-indicator { background: rgba(30, 38, 52, 0.92); color: #9db8ee; }
+  .mg-team-indicator.team-b { color: #f48fb6; }
+  .mg-team-done-note { background: #24402a; color: #9be08f; }
+  .btn-team-mini { background: #2b3342; border-color: #3d4757; color: #8f9bb0; }
+  .chat-msg.other .chat-bubble { background: #2b3342; color: #e5e9f0; }
+  .chat-nick { color: #dbe6ff; }
+  .chat-time { color: #7e8aa0; }
+  .chat-input { background: #2b3342; border-color: #3d4757; color: #eee; }
+}

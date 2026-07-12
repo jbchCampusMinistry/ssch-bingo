@@ -98,6 +98,9 @@
     <main class="main-body">
       <p class="verse">오라 우리가 여호와께 노래하며 우리 구원의 반석을 향하여 <b>즐거이</b> 부르자 <span class="verse-ref">(시 95:1)</span></p>
 
+      <!-- 중고등부 팀 빙고 입장 (권한자/관리자만 입장 가능 — 클릭 시 판정) -->
+      <button type="button" class="btn-mg-enter" onclick="openMgView()">🎒 중고등부 빙고</button>
+
       <!-- 내 진행 상황 요약 -->
       <div class="my-stats">
         <div class="stat"><span class="stat-num" id="statBingos">0</span><span class="stat-label">빙고</span></div>
@@ -105,7 +108,7 @@
       </div>
 
       <!-- 5×5 빙고판 (칸은 app.js가 생성) -->
-      <div class="board-wrap">
+      <div id="boardWrap" class="board-wrap">
         <div id="board" class="board" role="grid" aria-label="빙고판"></div>
         <svg id="lineOverlay" class="line-overlay" viewBox="0 0 500 500" preserveAspectRatio="none" aria-hidden="true"></svg>
       </div>
@@ -121,6 +124,64 @@
 
     <footer class="app-footer">
       <p class="footer-church">시흥서부교회 청년회</p>
+      <p class="footer-note">※ 모든 미션은 AI 사용 금지</p>
+    </footer>
+
+    <!-- 채팅 열기 버튼 (청년회 메인 전용) -->
+    <button type="button" id="chatFab" class="chat-fab" onclick="openChatPanel()" aria-label="채팅 열기">💬</button>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- 중고등부(팀 빙고) 화면                          -->
+  <!-- ============================================ -->
+  <section id="mgView" class="view hidden">
+    <div class="hero hero-compact">
+      <h1 class="app-title app-title-sm">
+        <span class="t-joy">중고등부</span>
+        <span class="t-camp">하계수양회</span>
+        <span class="t-bingo">BINGO</span>
+      </h1>
+      <div class="user-bar">
+        <button class="btn-logout" onclick="backToMainFromMg()">← 청년회로</button>
+      </div>
+    </div>
+    <div class="hero-wave" aria-hidden="true">
+      <svg viewBox="0 0 375 30" preserveAspectRatio="none"><path fill="#3b6fd4" d="M0 0 H375 V10 C310 30 240 2 180 14 C120 26 60 8 0 22 Z"/></svg>
+    </div>
+
+    <main class="main-body">
+      <!-- 팀 표시 + (관리자) A/B 보기 전환 -->
+      <div class="mg-team-bar">
+        <span id="mgTeamIndicator" class="mg-team-indicator"></span>
+        <div id="mgTeamToggle" class="mg-team-toggle hidden" role="group" aria-label="팀 보기 전환">
+          <button type="button" id="mgToggleA" onclick="handleMgViewTeam('A')">A팀</button>
+          <button type="button" id="mgToggleB" onclick="handleMgViewTeam('B')">B팀</button>
+        </div>
+      </div>
+
+      <!-- 팀 진행 상황 요약 -->
+      <div class="my-stats">
+        <div class="stat"><span class="stat-num" id="mgStatBingos">0</span><span class="stat-label">팀 빙고</span></div>
+        <div class="stat"><span class="stat-num" id="mgStatChecks">0</span><span class="stat-label">완료 미션</span></div>
+      </div>
+
+      <!-- 5×5 팀 빙고판 (칸은 app.js가 생성) -->
+      <div id="mgBoardWrap" class="board-wrap">
+        <div id="mgBoard" class="board" role="grid" aria-label="중고등부 팀 빙고판"></div>
+        <svg id="mgLineOverlay" class="line-overlay" viewBox="0 0 500 500" preserveAspectRatio="none" aria-hidden="true"></svg>
+      </div>
+
+      <!-- A팀 vs B팀 순위 -->
+      <section class="rank-section">
+        <h2 class="rank-title">🏆 A팀 vs B팀</h2>
+        <ol id="mgRankList" class="rank-list">
+          <li class="rank-empty">아직 완료한 미션이 없어요</li>
+        </ol>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p class="footer-church">시흥서부교회 중고등부</p>
       <p class="footer-note">※ 모든 미션은 AI 사용 금지</p>
     </footer>
   </section>
@@ -154,7 +215,7 @@
       <div class="my-proof" id="myProof"></div>
 
       <!-- 전체 인증샷 갤러리 -->
-      <h3 class="gallery-title">📸 모두의 인증샷</h3>
+      <h3 class="gallery-title" id="galleryTitle">📸 모두의 인증샷</h3>
       <div id="galleryGrid" class="gallery-grid">
         <p class="gallery-empty">아직 인증한 사람이 없어요. 첫 번째가 되어 보세요!</p>
       </div>
@@ -198,6 +259,39 @@
       <div class="modal-actions">
         <button class="btn btn-danger" onclick="handleConfirmRevoke()">해제</button>
         <button class="btn btn-ghost" onclick="closeRevokeModal()">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 중고등부 팀 선택 모달 (최초 입장 시 1회)          -->
+  <!-- ============================================ -->
+  <div id="mgTeamModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 class="modal-title">🎒 팀 선택</h2>
+      <p class="modal-desc">중고등부 빙고는 팀전이에요!<br>소속 팀을 선택해 주세요.<br><b>한 번 선택하면 바꿀 수 없어요.</b> (변경은 관리자에게)</p>
+      <div class="mg-team-pick">
+        <button type="button" class="btn-team btn-team-a" onclick="handlePickMgTeam('A')">A팀</button>
+        <button type="button" class="btn-team btn-team-b" onclick="handlePickMgTeam('B')">B팀</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeMgTeamModal()">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 채팅 패널 (청년회 메인, 카카오톡 스타일)          -->
+  <!-- ============================================ -->
+  <div id="chatModal" class="modal-overlay chat-overlay hidden" onclick="closeChatPanelFromOverlay(event)">
+    <div class="modal modal-chat">
+      <button class="modal-close" onclick="closeChatPanel()" aria-label="닫기">✕</button>
+      <h2 class="modal-title">💬 청년회 채팅</h2>
+      <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+      <div class="chat-input-row">
+        <input id="chatInput" class="chat-input" type="text" maxlength="500"
+               placeholder="메시지를 입력해 주세요" autocomplete="off">
+        <button type="button" class="btn-chat-send" onclick="handleChatSend()">전송</button>
       </div>
     </div>
   </div>

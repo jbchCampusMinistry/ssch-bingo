@@ -22,7 +22,11 @@ import {
   set,
   update,
   remove,
-  onValue
+  onValue,
+  push,
+  query,
+  limitToLast,
+  onChildAdded
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
 /* ----------------------------------------------------------
@@ -66,6 +70,17 @@ let usersUnsub = null;       // 관리자 패널 회원 목록 리스너 해제 
 let lastLBKey = null;        // 마지막으로 기록한 "checks:bingos" (불필요한 재기록 방지)
 let lbReady = false;         // 내 기존 leaderboard 값을 읽었는지
 let emitTimer = null;        // 제출 갱신 디바운스
+
+/* ---------- 중고등부(팀 빙고) 상태 ---------- */
+let currentMgRole = false;            // 내 중고등부 권한 (mgRoles/$uid)
+let currentMgTeam = null;             // 내 소속 팀 "A"|"B" (mgTeams/$uid)
+let mgBoardUnsubs = [];               // A/B 두 팀 보드 리스너 해제 함수들
+let mgBoardCache = { A: null, B: null }; // 팀별 mgSubmissions 스냅샷 캐시
+let mgGalleryUnsub = null;            // 중고등부 갤러리 리스너 해제 함수
+let mgGalleryKey = null;              // "팀/미션번호" (뒤늦은 응답 무시용)
+
+/* ---------- 채팅 상태 ---------- */
+let chatUnsub = null;                 // 채팅 리스너 해제 함수
 
 /* ==========================================================
    초기화
@@ -127,6 +142,9 @@ async function handleSignedIn(user) {
     } catch (e) { /* 규칙상 읽기 실패해도 무시 */ }
     currentIsAdmin = ADMIN_EMAILS.includes(user.email || "") || adminNode;
 
+    // 2-1) 중고등부 권한/팀 읽기 (mgRoles / mgTeams 노드가 권위 데이터)
+    await refreshMgState();
+
     // 3) 프로필 기본 정보 기록 (닉네임은 건드리지 않음)
     await update(ref(db, "users/" + user.uid), {
       email: user.email || "",
@@ -165,6 +183,20 @@ async function enterMain() {
   window.showMain({ uid: currentUser.uid, email: currentUser.email }, currentNick, currentIsAdmin);
   subscribeMySubmissions();
   subscribeLeaderboard();
+  window.fbChatWatch(); // 청년회 메인 채팅 실시간 구독 시작
+}
+
+/** 내 중고등부 권한(mgRoles)/팀(mgTeams) 최신값 읽기 — 로그인 시 + 중고등부 입장 시 */
+async function refreshMgState() {
+  if (!currentUser) { currentMgRole = false; currentMgTeam = null; return; }
+  try {
+    const roleSnap = await get(ref(db, "mgRoles/" + currentUser.uid));
+    currentMgRole = roleSnap.exists() && roleSnap.val() === true;
+  } catch (e) { currentMgRole = false; }
+  try {
+    const teamSnap = await get(ref(db, "mgTeams/" + currentUser.uid));
+    currentMgTeam = teamSnap.exists() ? teamSnap.val() : null;
+  } catch (e) { currentMgTeam = null; }
 }
 
 /* ==========================================================
@@ -413,7 +445,9 @@ window.fbWatchUsers = function () {
           uid: uid,
           nick: u.nick || "",
           email: u.email || "",
-          isAdmin: u.isAdmin === true
+          isAdmin: u.isAdmin === true,
+          mgRole: u.mgRole === true,
+          mgTeam: u.mgTeam === "A" || u.mgTeam === "B" ? u.mgTeam : ""
         });
       });
     }
@@ -462,14 +496,268 @@ window.fbTestCheck = async function (mid, on) {
 };
 
 /* ==========================================================
+   중고등부(팀 빙고) — 입장/팀 선택
+   ※ A·B 두 팀이 하나의 보드를 함께 채우는 팀전.
+     메타(mgSubmissions)와 사진(mgPhotos)을 분리 저장해 보드 구독을 가볍게 유지.
+   ========================================================== */
+
+/** 중고등부 입장 판정: 권한 없음 → denied / 팀 미선택 → needTeam / 입장 → 보드 구독 시작 */
+window.fbMgEnter = async function () {
+  if (!currentUser) return { denied: true };
+  await refreshMgState(); // 관리자가 방금 권한/팀을 바꿨을 수 있으니 최신화
+  if (!currentIsAdmin && !currentMgRole) return { denied: true };
+  if (!currentIsAdmin && !currentMgTeam) return { needTeam: true };
+  window.fbMgWatchBoard();
+  return { team: currentMgTeam, isAdmin: currentIsAdmin };
+};
+
+/** 내 팀 최초 선택 — 보안규칙상 최초 1회만 성공 (이후엔 관리자만 변경 가능) */
+window.fbMgSetMyTeam = async function (team) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  if (team !== "A" && team !== "B") throw new Error("잘못된 팀이에요.");
+  await set(ref(db, "mgTeams/" + currentUser.uid), team);
+  try {
+    await update(ref(db, "users/" + currentUser.uid), { mgTeam: team }); // 표시용 미러
+  } catch (e) { /* 미러 실패는 무시 (권위 데이터는 mgTeams) */ }
+  currentMgTeam = team;
+};
+
+/* ==========================================================
+   중고등부 — 보드/순위 실시간 구독 (A·B 두 팀 모두)
+   ========================================================== */
+
+/** A·B 두 팀의 mgSubmissions를 구독 → window.onMgData({A:{done,counts,mine}, B:{...}}, 내팀) */
+window.fbMgWatchBoard = function () {
+  window.fbMgUnwatchBoard();
+  ["A", "B"].forEach((team) => {
+    const unsub = onValue(ref(db, "mgSubmissions/" + team), (snap) => {
+      mgBoardCache[team] = snap.exists() ? snap.val() : {};
+      emitMgData();
+    }, (err) => {
+      console.warn("중고등부 보드 구독 오류(" + team + "팀):", err);
+    });
+    mgBoardUnsubs.push(unsub);
+  });
+};
+
+window.fbMgUnwatchBoard = function () {
+  mgBoardUnsubs.forEach((fn) => { try { fn(); } catch (e) {} });
+  mgBoardUnsubs = [];
+  mgBoardCache = { A: null, B: null };
+};
+
+/** 두 팀 캐시가 모두 준비되면 완료 맵/인원수/내 제출 메타를 계산해 app.js로 전달 */
+function emitMgData() {
+  if (mgBoardCache.A === null || mgBoardCache.B === null) return; // 둘 다 도착 후 렌더
+  const out = {};
+  ["A", "B"].forEach((team) => {
+    const raw = mgBoardCache[team] || {};
+    const done = {};   // { mid: true } — 유효 제출이 1명이라도 있으면 완료
+    const counts = {}; // { mid: 유효 제출 인원수 }
+    const mine = {};   // { mid: 내 제출 메타 }
+    Object.keys(raw).forEach((mid) => {
+      const subs = raw[mid] || {};
+      let c = 0;
+      Object.keys(subs).forEach((uid) => {
+        const s = subs[uid] || {};
+        const valid = (s.hasPhoto === true || s.test === true) && s.revoked !== true;
+        if (valid) c++;
+        if (currentUser && uid === currentUser.uid) mine[mid] = s;
+      });
+      if (c > 0) done[mid] = true;
+      if (c > 0) counts[mid] = c;
+    });
+    out[team] = { done: done, counts: counts, mine: mine };
+  });
+  if (typeof window.onMgData === "function") window.onMgData(out, currentMgTeam);
+}
+
+/* ==========================================================
+   중고등부 — 갤러리 (메타 구독 + 사진은 개별 get)
+   ========================================================== */
+window.fbMgWatchGallery = function (team, mid) {
+  window.fbMgUnwatchGallery();
+  mgGalleryKey = team + "/" + mid;
+  const key = mgGalleryKey;
+  const r = ref(db, "mgSubmissions/" + team + "/" + mid);
+  mgGalleryUnsub = onValue(r, async (snap) => {
+    const items = [];
+    const photoGets = [];
+    if (snap.exists()) {
+      const val = snap.val();
+      Object.keys(val).forEach((uid) => {
+        const s = val[uid] || {};
+        const item = {
+          uid: uid,
+          nick: s.nick || "",
+          photo: "",
+          ts: s.ts || 0,
+          test: s.test === true,
+          revoked: s.revoked === true,
+          revokeComment: s.revokeComment || ""
+        };
+        items.push(item);
+        if (s.hasPhoto === true) {
+          photoGets.push(
+            get(ref(db, "mgPhotos/" + team + "/" + mid + "/" + uid))
+              .then((ps) => { if (ps.exists()) item.photo = ps.val(); })
+              .catch(() => { /* 사진 못 읽어도 목록은 표시 */ })
+          );
+        }
+      });
+    }
+    await Promise.all(photoGets);
+    if (mgGalleryKey !== key) return; // 그 사이 다른 미션/팀으로 이동 → 무시
+    window.renderMgGallery(mid, items);
+  }, (err) => {
+    console.warn("중고등부 갤러리 구독 오류:", err);
+  });
+};
+
+window.fbMgUnwatchGallery = function () {
+  if (mgGalleryUnsub) { try { mgGalleryUnsub(); } catch (e) {} mgGalleryUnsub = null; }
+  mgGalleryKey = null;
+};
+
+/** 사진 1장 조회 (미션 모달의 "내 인증" 표시용) */
+window.fbMgGetPhoto = async function (team, mid, uid) {
+  const snap = await get(ref(db, "mgPhotos/" + team + "/" + mid + "/" + uid));
+  return snap.exists() ? snap.val() : "";
+};
+
+/* ==========================================================
+   중고등부 — 업로드 / 삭제 / 테스트 체크 / 체크 해제
+   ========================================================== */
+
+/** 인증샷 업로드 — 사진(mgPhotos) 먼저, 메타(mgSubmissions)는 나중에 (사진 없는 완료 순간 방지) */
+window.fbMgUpload = async function (team, mid, dataUrl) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  await set(ref(db, "mgPhotos/" + team + "/" + mid + "/" + currentUser.uid), dataUrl);
+  await set(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid), {
+    nick: currentNick,
+    hasPhoto: true,
+    ts: Date.now(),
+    revoked: false
+  });
+};
+
+/** 내 인증샷 삭제 — 메타 먼저 지워 완료 상태부터 해제 */
+window.fbMgDelete = async function (team, mid) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  await remove(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid));
+  await remove(ref(db, "mgPhotos/" + team + "/" + mid + "/" + currentUser.uid));
+};
+
+/** 관리자 테스트 체크 — 사진 없이 메타만 기록 (mgPhotos에는 아무것도 안 씀) */
+window.fbMgTestCheck = async function (team, mid, on) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  if (on) {
+    await set(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid), {
+      nick: currentNick,
+      ts: Date.now(),
+      test: true,
+      revoked: false
+    });
+  } else {
+    await remove(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid));
+    await remove(ref(db, "mgPhotos/" + team + "/" + mid + "/" + currentUser.uid));
+  }
+};
+
+/** 관리자 체크 해제 (중고등부) */
+window.fbMgRevoke = async function (team, mid, uid, comment) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  await update(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + uid), {
+    revoked: true,
+    revokeComment: comment,
+    revokeBy: currentNick,
+    revokeTs: Date.now()
+  });
+};
+
+/* ==========================================================
+   중고등부 — 관리자: 권한 부여/해제, 팀 변경
+   ========================================================== */
+
+/** 중고등부 권한 지정/해제 — mgRoles 노드 + users 미러 동기화 (해제 시 팀도 초기화) */
+window.fbSetMgRole = async function (uid, on) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  if (on) {
+    await set(ref(db, "mgRoles/" + uid), true);
+    await update(ref(db, "users/" + uid), { mgRole: true });
+  } else {
+    await remove(ref(db, "mgRoles/" + uid));
+    await remove(ref(db, "mgTeams/" + uid));
+    await update(ref(db, "users/" + uid), { mgRole: false, mgTeam: null });
+  }
+  if (currentUser.uid === uid) await refreshMgState();
+};
+
+/** 관리자의 팀 변경 (멤버 본인은 최초 1회만, 관리자는 언제든) */
+window.fbAdminSetMgTeam = async function (uid, team) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  if (team !== "A" && team !== "B") throw new Error("잘못된 팀이에요.");
+  await set(ref(db, "mgTeams/" + uid), team);
+  await update(ref(db, "users/" + uid), { mgTeam: team });
+  if (currentUser.uid === uid) currentMgTeam = team;
+};
+
+/* ==========================================================
+   채팅 (청년회 메인) — chat/$pushId = { uid, nick, text, ts }
+   ========================================================== */
+
+/** 최근 200개 + 신규 메시지 실시간 구독 → window.onChatMessage(msg) */
+window.fbChatWatch = function () {
+  window.fbChatUnwatch();
+  if (typeof window.clearChat === "function") window.clearChat(); // 재구독 시 중복 방지
+  const q = query(ref(db, "chat"), limitToLast(200));
+  chatUnsub = onChildAdded(q, (snap) => {
+    const v = snap.val() || {};
+    if (typeof window.onChatMessage === "function") {
+      window.onChatMessage({
+        id: snap.key,
+        uid: v.uid || "",
+        nick: v.nick || "",
+        text: typeof v.text === "string" ? v.text : "",
+        ts: v.ts || 0
+      });
+    }
+  }, (err) => {
+    console.warn("채팅 구독 오류:", err);
+  });
+};
+
+/** 메시지 전송 (빈 문자열 무시, 500자 제한) */
+window.fbChatSend = async function (text) {
+  if (!currentUser || !currentNick) throw new Error("로그인이 필요해요.");
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return;
+  await push(ref(db, "chat"), {
+    uid: currentUser.uid,
+    nick: currentNick,
+    text: trimmed.slice(0, 500),
+    ts: Date.now()
+  });
+};
+
+window.fbChatUnwatch = function () {
+  if (chatUnsub) { try { chatUnsub(); } catch (e) {} chatUnsub = null; }
+};
+
+/* ==========================================================
    구독 정리 (로그아웃 시)
    ========================================================== */
 function cleanupSubscriptions() {
   unsubscribeMySubmissions();
   window.fbUnwatchGallery();
   window.fbUnwatchUsers();
+  window.fbMgUnwatchBoard();
+  window.fbMgUnwatchGallery();
+  window.fbChatUnwatch();
   if (lbUnsub) { try { lbUnsub(); } catch (e) {} lbUnsub = null; }
   mySubs = {};
   lastLBKey = null;
   lbReady = false;
+  currentMgRole = false;
+  currentMgTeam = null;
 }

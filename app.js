@@ -58,9 +58,16 @@ var APP_STATE = {
   mySubs: {},          // { mid: { photo, ts, revoked, revokeComment, revokeBy, ... } }
   gallery: {},         // { mid: [ { uid, nick, photo, ts, revoked, ... } ] }
   currentMid: null,    // 열려 있는 미션 상세 모달의 미션 번호
-  revokeTarget: null,  // { mid, uid, nick } 체크 해제 대상
+  revokeTarget: null,  // { mid, uid, nick, mgTeam? } 체크 해제 대상
   adminDetail: null,   // { uid, nick } 관리자 패널에서 보고 있는 회원
-  uploading: false
+  uploading: false,
+
+  /* ---------- 중고등부(팀 빙고) ---------- */
+  mgMode: false,       // 중고등부 화면/모달 모드 여부
+  mgTeam: null,        // 내 소속 팀 "A"|"B" (관리자는 null일 수 있음)
+  mgViewTeam: null,    // 현재 보고 있는 팀 (관리자는 A/B 토글로 전환)
+  mgData: null,        // { A: { done, counts, mine }, B: {...} } — firebase.js가 전달
+  mgGallery: {}        // { mid: items } 중고등부 갤러리 캐시 (보고 있는 팀 기준)
 };
 
 /* 마스터 관리자 이메일 (firebase.js의 ADMIN_EMAILS와 동일 — UI 표시용) */
@@ -79,10 +86,10 @@ function initApp() {
   var _rzTimer = null;
   window.addEventListener("resize", function () {
     if (_rzTimer) clearTimeout(_rzTimer);
-    _rzTimer = setTimeout(drawBingoLines, 120);
+    _rzTimer = setTimeout(function () { drawBingoLines(); drawMgBingoLines(); }, 120);
   });
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(function () { drawBingoLines(); });
+    document.fonts.ready.then(function () { drawBingoLines(); drawMgBingoLines(); });
   }
 
   // 닉네임 입력에서 Enter로 저장
@@ -90,6 +97,14 @@ function initApp() {
   nickInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") handleSaveNick();
   });
+
+  // 채팅 입력에서 Enter로 전송 (한글 조합 중 Enter는 무시)
+  var chatInput = document.getElementById("chatInput");
+  if (chatInput) {
+    chatInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.isComposing) handleChatSend();
+    });
+  }
 
   // 서비스워커 등록 (지원 브라우저 + http(s) 환경에서만)
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
@@ -160,7 +175,7 @@ function refreshBoard() {
   var checks = 0;
   var i;
   for (i = 0; i < 25; i++) {
-    var cell = document.querySelector('.cell[data-mid="' + i + '"]');
+    var cell = document.querySelector('#board .cell[data-mid="' + i + '"]');
     if (!cell) continue;
     var sub = APP_STATE.mySubs[i];
     var done = isChecked(i);
@@ -193,10 +208,10 @@ function countBingos() {
   return count;
 }
 
-/** 완성된 줄 위에 빨간 반투명 선 오버레이 (여러 줄 동시 표시) */
-function drawBingoLines() {
-  var svg = document.getElementById("lineOverlay");
-  var wrap = document.querySelector(".board-wrap");
+/** 완성된 줄 위에 빨간 반투명 선 오버레이 — 보드/오버레이/판정 함수를 받아 그리는 공통 함수 */
+function drawLinesGeneric(wrapId, boardId, svgId, isDoneFn) {
+  var svg = document.getElementById(svgId);
+  var wrap = document.getElementById(wrapId);
   if (!svg || !wrap) return;
   svg.innerHTML = "";
 
@@ -206,13 +221,13 @@ function drawBingoLines() {
   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
 
   function center(idx) {
-    var cell = document.querySelector('.cell[data-mid="' + idx + '"]');
+    var cell = document.querySelector("#" + boardId + ' .cell[data-mid="' + idx + '"]');
     if (!cell) return null;
     return { x: cell.offsetLeft + cell.offsetWidth / 2, y: cell.offsetTop + cell.offsetHeight / 2 };
   }
 
   BINGO_LINES.forEach(function (line) {
-    if (!line.every(isChecked)) return;
+    if (!line.every(isDoneFn)) return;
     var a = center(line[0]), b = center(line[4]);
     if (!a || !b) return;
     var el = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -220,6 +235,11 @@ function drawBingoLines() {
     el.setAttribute("x2", b.x); el.setAttribute("y2", b.y);
     svg.appendChild(el);
   });
+}
+
+/** 청년회(내 개인) 빙고 줄 그리기 */
+function drawBingoLines() {
+  drawLinesGeneric("boardWrap", "board", "lineOverlay", isChecked);
 }
 
 /* ==========================================================
@@ -233,11 +253,20 @@ window.showLogin = function () {
   APP_STATE.isAdmin = false;
   APP_STATE.mySubs = {};
   APP_STATE.gallery = {};
+  APP_STATE.mgMode = false;
+  APP_STATE.mgTeam = null;
+  APP_STATE.mgViewTeam = null;
+  APP_STATE.mgData = null;
+  APP_STATE.mgGallery = {};
   document.getElementById("mainView").classList.add("hidden");
+  document.getElementById("mgView").classList.add("hidden");
   document.getElementById("loginView").classList.remove("hidden");
   closeMissionModal();
   closeRevokeModal();
   closeAdminPanel();
+  closeMgTeamModal();
+  closeChatPanel();
+  window.clearChat();
   document.getElementById("nickModal").classList.add("hidden");
   hideLoading();
 };
@@ -247,8 +276,10 @@ window.showMain = function (user, nick, isAdmin) {
   APP_STATE.user = user;
   APP_STATE.nick = nick;
   APP_STATE.isAdmin = !!isAdmin;
+  APP_STATE.mgMode = false;
 
   document.getElementById("loginView").classList.add("hidden");
+  document.getElementById("mgView").classList.add("hidden");
   document.getElementById("mainView").classList.remove("hidden");
   document.getElementById("nickModal").classList.add("hidden");
 
@@ -297,8 +328,8 @@ window.setConfigNotice = function (msg) {
 window.onMySubmissions = function (subsMap) {
   APP_STATE.mySubs = subsMap || {};
   refreshBoard();
-  // 미션 상세 모달이 열려 있으면 내 인증 영역도 다시 그림
-  if (APP_STATE.currentMid !== null) renderMyProof(APP_STATE.currentMid);
+  // 미션 상세 모달이 열려 있으면 내 인증 영역도 다시 그림 (중고등부 모드는 onMgData가 담당)
+  if (APP_STATE.currentMid !== null && !APP_STATE.mgMode) renderMyProof(APP_STATE.currentMid);
 };
 
 /** 특정 미션의 갤러리 갱신 */
@@ -477,11 +508,21 @@ function openMissionModal(mid) {
 
   document.getElementById("missionNo").textContent = "MISSION " + (mid + 1) + " / 25";
   document.getElementById("missionText").textContent = MISSIONS[mid];
-  renderMyProof(mid);
 
-  // 갤러리는 캐시 먼저 보여주고 실시간 구독 시작
-  window.renderGallery(mid, APP_STATE.gallery[mid] || []);
-  if (typeof window.fbWatchGallery === "function") window.fbWatchGallery(mid);
+  var gTitle = document.getElementById("galleryTitle");
+  if (APP_STATE.mgMode) {
+    // 중고등부 모드 — 팀 갤러리/팀 인증으로 동작
+    if (gTitle) gTitle.textContent = "📸 " + APP_STATE.mgViewTeam + "팀의 인증샷";
+    renderMgMyProof(mid);
+    window.renderMgGallery(mid, APP_STATE.mgGallery[mid] || []);
+    if (typeof window.fbMgWatchGallery === "function") window.fbMgWatchGallery(APP_STATE.mgViewTeam, mid);
+  } else {
+    if (gTitle) gTitle.textContent = "📸 모두의 인증샷";
+    renderMyProof(mid);
+    // 갤러리는 캐시 먼저 보여주고 실시간 구독 시작
+    window.renderGallery(mid, APP_STATE.gallery[mid] || []);
+    if (typeof window.fbWatchGallery === "function") window.fbWatchGallery(mid);
+  }
 
   document.getElementById("missionModal").classList.remove("hidden");
 }
@@ -489,6 +530,7 @@ function openMissionModal(mid) {
 function closeMissionModal() {
   APP_STATE.currentMid = null;
   if (typeof window.fbUnwatchGallery === "function") window.fbUnwatchGallery();
+  if (typeof window.fbMgUnwatchGallery === "function") window.fbMgUnwatchGallery();
   document.getElementById("missionModal").classList.add("hidden");
 }
 
@@ -632,6 +674,13 @@ function handlePhotoSelected(e) {
 
   compressImage(file)
     .then(function (dataUrl) {
+      // 중고등부 모드면 팀 보드로, 아니면 기존 청년회 경로로 업로드
+      if (APP_STATE.mgMode) {
+        if (typeof window.fbMgUpload !== "function") {
+          throw new Error("Firebase 미연결");
+        }
+        return window.fbMgUpload(APP_STATE.mgViewTeam, APP_STATE.currentMid, dataUrl);
+      }
       if (typeof window.fbUploadSubmission !== "function") {
         throw new Error("Firebase 미연결");
       }
@@ -728,10 +777,11 @@ function loadViaImgTag(file) {
    관리자 체크 해제 모달
    ========================================================== */
 
-function openRevokeModal(mid, uid, nick) {
-  APP_STATE.revokeTarget = { mid: mid, uid: uid, nick: nick };
+function openRevokeModal(mid, uid, nick, mgTeam) {
+  APP_STATE.revokeTarget = { mid: mid, uid: uid, nick: nick, mgTeam: mgTeam || null };
   document.getElementById("revokeTarget").textContent =
-    "“" + (nick || "이 사용자") + "” 님의 「" + MISSIONS[mid] + "」 인증을 해제합니다.";
+    "“" + (nick || "이 사용자") + "” 님의 「" + MISSIONS[mid] + "」 인증을 해제합니다." +
+    (mgTeam ? " (중고등부 " + mgTeam + "팀)" : "");
   document.getElementById("revokeComment").value = "";
   document.getElementById("revokeError").classList.add("hidden");
   document.getElementById("revokeModal").classList.remove("hidden");
@@ -755,9 +805,13 @@ function handleConfirmRevoke() {
   }
   errEl.classList.add("hidden");
 
-  if (typeof window.fbRevoke !== "function") return;
+  // 중고등부 인증 해제는 팀 경로(fbMgRevoke)로 분기
+  var revokeFn = target.mgTeam
+    ? function () { return window.fbMgRevoke(target.mgTeam, target.mid, target.uid, comment); }
+    : function () { return window.fbRevoke(target.mid, target.uid, comment); };
+  if (typeof (target.mgTeam ? window.fbMgRevoke : window.fbRevoke) !== "function") return;
   showLoading();
-  window.fbRevoke(target.mid, target.uid, comment)
+  revokeFn()
     .then(function () {
       hideLoading();
       closeRevokeModal();
@@ -881,10 +935,88 @@ window.renderAdminUsers = function (list) {
       right.appendChild(onBtn);
     }
 
+    // 중고등부 권한/팀 관리 (마스터 제외)
+    if (!isMaster) {
+      if (u.mgRole) {
+        // 팀 선택 (A/B) — 현재 팀이 강조 표시, 클릭 시 관리자 강제 변경
+        var teamWrap = document.createElement("span");
+        teamWrap.className = "mg-team-mini";
+        ["A", "B"].forEach(function (t) {
+          var tb = document.createElement("button");
+          tb.type = "button";
+          tb.className = "btn-team-mini" + (u.mgTeam === t ? " active" : "");
+          tb.textContent = t;
+          tb.addEventListener("click", (function (uid, nick, team, cur) {
+            return function () { handleAdminSetMgTeam(uid, nick, team, cur); };
+          })(u.uid, displayNick, t, u.mgTeam));
+          teamWrap.appendChild(tb);
+        });
+        right.appendChild(teamWrap);
+
+        var mgOffBtn = document.createElement("button");
+        mgOffBtn.type = "button";
+        mgOffBtn.className = "btn-grant btn-grant-off";
+        mgOffBtn.textContent = "중고등부 해제";
+        mgOffBtn.addEventListener("click", (function (uid, nick) {
+          return function () { handleToggleMgRole(uid, nick, false); };
+        })(u.uid, displayNick));
+        right.appendChild(mgOffBtn);
+      } else {
+        var mgOnBtn = document.createElement("button");
+        mgOnBtn.type = "button";
+        mgOnBtn.className = "btn-grant btn-grant-mg";
+        mgOnBtn.textContent = "중고등부 지정";
+        mgOnBtn.addEventListener("click", (function (uid, nick) {
+          return function () { handleToggleMgRole(uid, nick, true); };
+        })(u.uid, displayNick));
+        right.appendChild(mgOnBtn);
+      }
+    }
+
     row.appendChild(right);
     box.appendChild(row);
   });
 };
+
+/** 중고등부 권한 지정/해제 */
+function handleToggleMgRole(uid, nick, on) {
+  var q = on
+    ? "“" + nick + "” 님에게 중고등부 권한을 부여할까요?"
+    : "“" + nick + "” 님의 중고등부 권한을 해제할까요? (팀 지정도 함께 초기화돼요)";
+  if (!confirm(q)) return;
+  if (typeof window.fbSetMgRole !== "function") return;
+
+  showLoading();
+  window.fbSetMgRole(uid, on)
+    .then(function () {
+      hideLoading();
+      showToast(on ? nick + " 님을 중고등부로 지정했어요" : "중고등부 권한을 해제했어요");
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("중고등부 권한 변경 실패:", err);
+      showToast("권한 변경에 실패했어요. 보안 규칙이 최신인지 확인해 주세요.");
+    });
+}
+
+/** 관리자의 중고등부 팀 변경 */
+function handleAdminSetMgTeam(uid, nick, team, currentTeam) {
+  if (team === currentTeam) return;
+  if (!confirm("“" + nick + "” 님을 " + team + "팀으로 지정할까요?")) return;
+  if (typeof window.fbAdminSetMgTeam !== "function") return;
+
+  showLoading();
+  window.fbAdminSetMgTeam(uid, team)
+    .then(function () {
+      hideLoading();
+      showToast(nick + " 님을 " + team + "팀으로 지정했어요");
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("팀 변경 실패:", err);
+      showToast("팀 변경에 실패했어요. 보안 규칙이 최신인지 확인해 주세요.");
+    });
+}
 
 /** 관리자 권한 지정/해제 */
 function handleToggleAdmin(uid, nick, makeAdmin) {
@@ -1031,6 +1163,583 @@ function backToAdminUsers() {
   APP_STATE.adminDetail = null;
   document.getElementById("adminUserDetail").classList.add("hidden");
   document.getElementById("adminUsersView").classList.remove("hidden");
+}
+
+/* ==========================================================
+   중고등부(팀 빙고) — 입장 / 팀 선택
+   A·B 두 팀이 팀별 공동 보드 하나씩을 함께 채우는 팀전.
+   미션 모달은 청년회 것을 재사용 (APP_STATE.mgMode로 분기)
+   ========================================================== */
+
+/** 메인의 "🎒 중고등부 빙고" 버튼 — 권한 판정 후 입장/팀선택/거절 분기 */
+function openMgView() {
+  if (!APP_STATE.user) return;
+  if (typeof window.fbMgEnter !== "function") {
+    showToast("Firebase 모듈을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+    return;
+  }
+  showLoading();
+  window.fbMgEnter()
+    .then(function (res) {
+      hideLoading();
+      if (!res || res.denied) {
+        showToast("중고등부 페이지 접근 권한이 없어요.");
+        return;
+      }
+      if (res.needTeam) {
+        openMgTeamModal(); // 최초 입장 → 팀부터 선택
+        return;
+      }
+      enterMgView(res.team);
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("중고등부 입장 실패:", err);
+      showToast("중고등부 페이지에 들어가지 못했어요. 다시 시도해 주세요.");
+    });
+}
+
+/** 중고등부 화면 진입 (팀/권한 판정 완료 후) */
+function enterMgView(team) {
+  APP_STATE.mgMode = true;
+  APP_STATE.mgTeam = team || null;
+  APP_STATE.mgViewTeam = APP_STATE.mgTeam || APP_STATE.mgViewTeam || "A";
+  APP_STATE.mgGallery = {};
+  closeMgTeamModal();
+  closeChatPanel();
+  document.getElementById("mainView").classList.add("hidden");
+  document.getElementById("mgView").classList.remove("hidden");
+
+  // 관리자만 A/B 보기 전환 토글 노출
+  var toggle = document.getElementById("mgTeamToggle");
+  if (toggle) toggle.classList.toggle("hidden", !APP_STATE.isAdmin);
+
+  buildMgBoard();
+  refreshMgView();
+}
+
+/** 중고등부 → 청년회 메인으로 복귀 */
+function backToMainFromMg() {
+  APP_STATE.mgMode = false;
+  closeMissionModal();
+  if (typeof window.fbMgUnwatchBoard === "function") window.fbMgUnwatchBoard();
+  document.getElementById("mgView").classList.add("hidden");
+  document.getElementById("mainView").classList.remove("hidden");
+  refreshBoard(); // 숨겨진 동안 못 그린 빙고 줄 다시 그림
+}
+
+/* ---------- 팀 선택 모달 (최초 1회 — 이후엔 보안규칙이 변경 차단) ---------- */
+
+function openMgTeamModal() {
+  document.getElementById("mgTeamModal").classList.remove("hidden");
+}
+
+function closeMgTeamModal() {
+  var modal = document.getElementById("mgTeamModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function handlePickMgTeam(team) {
+  if (!confirm(team + "팀을 선택할까요?\n한 번 선택하면 바꿀 수 없어요! (변경은 관리자에게)")) return;
+  if (typeof window.fbMgSetMyTeam !== "function") return;
+
+  showLoading();
+  window.fbMgSetMyTeam(team)
+    .then(function () { return window.fbMgEnter(); })
+    .then(function (res) {
+      hideLoading();
+      if (!res || res.denied || res.needTeam) {
+        showToast("팀 선택에 실패했어요. 다시 시도해 주세요.");
+        return;
+      }
+      showToast(team + "팀에 배정됐어요! 함께 빙고를 채워 보세요 🎉");
+      enterMgView(res.team);
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("팀 선택 실패:", err);
+      showToast("팀 선택에 실패했어요. 이미 팀이 지정됐다면 관리자에게 문의해 주세요.");
+    });
+}
+
+/* ==========================================================
+   중고등부 — 보드 렌더링 / 빙고 판정
+   ========================================================== */
+
+/** 중고등부 5×5 칸 DOM 생성 (1회) — 청년회 보드와 같은 구조 */
+function buildMgBoard() {
+  var board = document.getElementById("mgBoard");
+  if (!board || board.childElementCount > 0) return;
+
+  var i;
+  for (i = 0; i < 25; i++) {
+    var cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "cell" + (i === 12 ? " center" : "");
+    cell.dataset.mid = String(i);
+    cell.setAttribute("role", "gridcell");
+    cell.setAttribute("aria-label", (i + 1) + "번 미션: " + MISSIONS[i]);
+
+    // 중앙 칸은 핑크 하트 배경 SVG
+    if (i === 12) {
+      cell.innerHTML =
+        '<svg class="heart-bg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">' +
+        '<path d="M50 92 C20 70 4 52 4 32 C4 16 16 6 29 6 C38 6 46 11 50 19 C54 11 62 6 71 6 C84 6 96 16 96 32 C96 52 80 70 50 92 Z"/>' +
+        "</svg>";
+    }
+
+    var label = document.createElement("span");
+    label.className = "cell-label";
+    label.textContent = MISSIONS[i];
+    cell.appendChild(label);
+
+    var check = document.createElement("span");
+    check.className = "check-mark";
+    check.textContent = "✓";
+    cell.appendChild(check);
+
+    var dot = document.createElement("span");
+    dot.className = "revoke-dot";
+    cell.appendChild(dot);
+
+    cell.addEventListener("click", (function (mid) {
+      return function () { openMissionModal(mid); };
+    })(i));
+
+    board.appendChild(cell);
+  }
+}
+
+/** 보고 있는 팀 기준으로 mid 칸이 완료(팀원 중 1명이라도 유효 인증)인지 */
+function isMgChecked(mid) {
+  var team = APP_STATE.mgViewTeam || "A";
+  var data = APP_STATE.mgData;
+  return !!(data && data[team] && data[team].done && data[team].done[mid] === true);
+}
+
+/** 완료 맵({mid:true})으로 빙고 줄 수 계산 (순위용 — 양 팀 공통) */
+function countBingosForDone(done) {
+  var count = 0;
+  BINGO_LINES.forEach(function (line) {
+    var ok = line.every(function (m) { return done[m] === true; });
+    if (ok) count++;
+  });
+  return count;
+}
+
+/** 중고등부 빙고 줄 그리기 */
+function drawMgBingoLines() {
+  drawLinesGeneric("mgBoardWrap", "mgBoard", "mgLineOverlay", isMgChecked);
+}
+
+/** 중고등부 화면 전체 갱신 — 보드 칠하기 + 요약 + 팀 표시 + 순위 */
+function refreshMgView() {
+  var team = APP_STATE.mgViewTeam || "A";
+  var data = (APP_STATE.mgData && APP_STATE.mgData[team]) || { done: {}, counts: {}, mine: {} };
+
+  buildMgBoard(); // 안전장치 (렌더 전 호출 대비)
+
+  var checks = 0;
+  var i;
+  for (i = 0; i < 25; i++) {
+    var cell = document.querySelector('#mgBoard .cell[data-mid="' + i + '"]');
+    if (!cell) continue;
+    var done = !!(data.done && data.done[i] === true);
+    var mine = data.mine ? data.mine[i] : null;
+    var revoked = !!(mine && mine.revoked === true) && !done; // 내 인증이 해제됐고 팀 완료도 아닐 때
+    cell.classList.toggle("done", done);
+    cell.classList.toggle("revoked", revoked);
+    if (done) checks++;
+  }
+
+  var bingos = countBingosForDone(data.done || {});
+  drawMgBingoLines();
+
+  var elB = document.getElementById("mgStatBingos");
+  var elC = document.getElementById("mgStatChecks");
+  if (elB) elB.textContent = String(bingos);
+  if (elC) elC.textContent = String(checks);
+
+  // 팀 표시 (멤버: 내 팀 / 관리자: 보고 있는 팀)
+  var ind = document.getElementById("mgTeamIndicator");
+  if (ind) {
+    ind.textContent = APP_STATE.mgTeam
+      ? "우리 팀: " + APP_STATE.mgTeam + "팀"
+      : team + "팀 보드 (관리자 보기)";
+    ind.classList.toggle("team-a", (APP_STATE.mgTeam || team) === "A");
+    ind.classList.toggle("team-b", (APP_STATE.mgTeam || team) === "B");
+  }
+
+  // 관리자 토글 강조
+  var btnA = document.getElementById("mgToggleA");
+  var btnB = document.getElementById("mgToggleB");
+  if (btnA) btnA.classList.toggle("active", team === "A");
+  if (btnB) btnB.classList.toggle("active", team === "B");
+
+  renderMgRanking();
+}
+
+/** A·B 팀 데이터 수신 (firebase.js의 fbMgWatchBoard가 호출) */
+window.onMgData = function (data, myTeam) {
+  APP_STATE.mgData = data || null;
+  APP_STATE.mgTeam = myTeam || null;
+  if (!APP_STATE.mgViewTeam) APP_STATE.mgViewTeam = APP_STATE.mgTeam || "A";
+  if (APP_STATE.mgMode) {
+    refreshMgView();
+    // 미션 상세 모달이 열려 있으면 내 인증 영역도 다시 그림
+    if (APP_STATE.currentMid !== null) renderMgMyProof(APP_STATE.currentMid);
+  }
+};
+
+/** A팀 vs B팀 순위 — 빙고 줄 수 → 완료 수 순 (내 팀 강조) */
+function renderMgRanking() {
+  var list = document.getElementById("mgRankList");
+  if (!list) return;
+  list.innerHTML = "";
+
+  var data = APP_STATE.mgData || {};
+  var rows = ["A", "B"].map(function (team) {
+    var done = (data[team] && data[team].done) || {};
+    var checks = 0;
+    Object.keys(done).forEach(function (k) { if (done[k] === true) checks++; });
+    return { team: team, checks: checks, bingos: countBingosForDone(done) };
+  });
+
+  rows.sort(function (a, b) {
+    if (b.bingos !== a.bingos) return b.bingos - a.bingos;
+    if (b.checks !== a.checks) return b.checks - a.checks;
+    return a.team < b.team ? -1 : 1;
+  });
+
+  var medals = ["🥇", "🥈"];
+  var prevKey = null, prevRank = 0;
+
+  rows.forEach(function (r, i) {
+    var key = r.bingos + ":" + r.checks;
+    var rank = (key === prevKey) ? prevRank : i + 1; // 동점 공동 순위
+    prevKey = key; prevRank = rank;
+
+    var li = document.createElement("li");
+    if (APP_STATE.mgTeam === r.team) li.classList.add("me");
+
+    var no = document.createElement("span");
+    no.className = "rank-no";
+    no.textContent = medals[rank - 1] || String(rank);
+
+    var nick = document.createElement("span");
+    nick.className = "rank-nick";
+    nick.textContent = r.team + "팀";
+
+    var bingo = document.createElement("span");
+    bingo.className = "rank-bingo";
+    bingo.textContent = "빙고 " + r.bingos + "줄";
+
+    var checksEl = document.createElement("span");
+    checksEl.className = "rank-checks";
+    checksEl.textContent = "완료 " + r.checks + "개";
+
+    li.appendChild(no); li.appendChild(nick); li.appendChild(bingo); li.appendChild(checksEl);
+    list.appendChild(li);
+  });
+}
+
+/** 관리자의 A/B 보기 전환 */
+function handleMgViewTeam(team) {
+  if (!APP_STATE.isAdmin) return;
+  if (APP_STATE.mgViewTeam === team) return;
+  APP_STATE.mgViewTeam = team;
+  APP_STATE.mgGallery = {}; // 다른 팀 갤러리 캐시 초기화
+  closeMissionModal();      // 팀이 바뀌면 열린 모달은 닫아 혼동 방지
+  refreshMgView();
+}
+
+/* ==========================================================
+   중고등부 — 미션 모달의 "내 인증" / 갤러리 / 테스트 체크
+   ========================================================== */
+
+/** 중고등부 모드의 "내 인증" 영역 렌더링 (사진은 mgPhotos에서 비동기 로드) */
+function renderMgMyProof(mid) {
+  var box = document.getElementById("myProof");
+  box.innerHTML = "";
+
+  var team = APP_STATE.mgViewTeam || "A";
+  var data = (APP_STATE.mgData && APP_STATE.mgData[team]) || { done: {}, mine: {} };
+  var sub = data.mine ? data.mine[mid] : null;
+  var teamDone = !!(data.done && data.done[mid] === true);
+  var myValid = !!(sub && (sub.hasPhoto === true || sub.test === true) && sub.revoked !== true);
+
+  var label = document.createElement("div");
+  label.className = "my-proof-label";
+  label.textContent = "내 인증 (" + team + "팀)";
+  box.appendChild(label);
+
+  // 팀원이 이미 완료한 칸 안내 (내 유효 인증이 없을 때)
+  if (teamDone && !myValid) {
+    var note = document.createElement("p");
+    note.className = "mg-team-done-note";
+    note.textContent = "✅ 팀원이 이미 완료한 미션이에요. 함께 인증해도 좋아요!";
+    box.appendChild(note);
+  }
+
+  // 관리자에게 해제된 경우 → 코멘트 표시 (빨간 글씨, 사진/테스트 공통)
+  if (sub && sub.revoked === true) {
+    var cmt = document.createElement("div");
+    cmt.className = "admin-comment";
+    var lb = document.createElement("span");
+    lb.className = "ac-label";
+    lb.textContent = "⚠ 관리자에 의해 체크가 해제되었어요";
+    cmt.appendChild(lb);
+    var txt = document.createElement("span");
+    txt.textContent = "관리자 코멘트: " + (sub.revokeComment || "(코멘트 없음)") +
+      (sub.revokeBy ? " — " + sub.revokeBy : "");
+    cmt.appendChild(txt);
+    box.appendChild(cmt);
+  }
+
+  if (sub && sub.hasPhoto === true) {
+    var img = document.createElement("img");
+    img.alt = "내 인증샷";
+    box.appendChild(img);
+    if (typeof window.fbMgGetPhoto === "function" && APP_STATE.user) {
+      window.fbMgGetPhoto(team, mid, APP_STATE.user.uid)
+        .then(function (photo) {
+          if (!photo) return;
+          img.src = photo;
+          img.addEventListener("click", function () { openLightbox(photo); });
+        })
+        .catch(function (err) { console.warn("내 인증샷 조회 실패:", err); });
+    }
+
+    var btns = document.createElement("div");
+    btns.className = "my-proof-btns";
+
+    var reBtn = document.createElement("button");
+    reBtn.type = "button";
+    reBtn.className = "btn btn-primary btn-sm";
+    reBtn.textContent = "다시 올리기";
+    reBtn.addEventListener("click", pickPhoto);
+    btns.appendChild(reBtn);
+
+    var delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn btn-ghost btn-sm";
+    delBtn.textContent = "삭제";
+    delBtn.addEventListener("click", function () {
+      if (!confirm("인증사진을 삭제할까요? 다른 팀원의 인증이 없으면 칸 체크도 사라져요.")) return;
+      if (typeof window.fbMgDelete === "function") {
+        showLoading();
+        window.fbMgDelete(team, mid)
+          .then(function () { hideLoading(); showToast("삭제했어요."); })
+          .catch(function () { hideLoading(); showToast("삭제에 실패했어요. 다시 시도해 주세요."); });
+      }
+    });
+    btns.appendChild(delBtn);
+
+    box.appendChild(btns);
+  } else if (sub && sub.test === true) {
+    // 관리자 테스트 체크 상태 (사진 없음)
+    var testInfo = document.createElement("p");
+    testInfo.className = "test-check-info";
+    testInfo.textContent = "🧪 테스트 체크로 완료된 칸이에요 (사진 없음)";
+    box.appendChild(testInfo);
+
+    if (APP_STATE.isAdmin) {
+      var offBtn = document.createElement("button");
+      offBtn.type = "button";
+      offBtn.className = "btn btn-ghost btn-sm btn-test";
+      offBtn.textContent = "🧪 테스트 체크 해제";
+      offBtn.addEventListener("click", function () { handleMgTestCheck(mid, false); });
+      box.appendChild(offBtn);
+    }
+  } else {
+    var upBtn = document.createElement("button");
+    upBtn.type = "button";
+    upBtn.className = "btn btn-primary";
+    upBtn.textContent = "📷 내 인증사진 올리기";
+    upBtn.addEventListener("click", pickPhoto);
+    box.appendChild(upBtn);
+
+    // 관리자: 사진 없이 팀 칸을 체크해 볼 수 있는 테스트 버튼
+    if (APP_STATE.isAdmin) {
+      var onBtn = document.createElement("button");
+      onBtn.type = "button";
+      onBtn.className = "btn btn-ghost btn-sm btn-test";
+      onBtn.textContent = "🧪 테스트 체크 (사진 없이)";
+      onBtn.addEventListener("click", function () { handleMgTestCheck(mid, true); });
+      box.appendChild(onBtn);
+    }
+  }
+}
+
+/** 중고등부 관리자 테스트 체크/해제 처리 */
+function handleMgTestCheck(mid, on) {
+  if (typeof window.fbMgTestCheck !== "function") return;
+  showLoading();
+  window.fbMgTestCheck(APP_STATE.mgViewTeam, mid, on)
+    .then(function () {
+      hideLoading();
+      showToast(on ? "테스트 체크했어요 🧪" : "테스트 체크를 해제했어요.");
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("테스트 체크 실패:", err);
+      showToast("테스트 체크에 실패했어요. 권한/네트워크를 확인해 주세요.");
+    });
+}
+
+/** 중고등부 팀 갤러리 갱신 (firebase.js의 fbMgWatchGallery가 호출) */
+window.renderMgGallery = function (mid, items) {
+  APP_STATE.mgGallery[mid] = items || [];
+  if (!APP_STATE.mgMode || APP_STATE.currentMid !== mid) return;
+
+  var grid = document.getElementById("galleryGrid");
+  grid.innerHTML = "";
+
+  var visible = (items || []).slice().sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+  if (visible.length === 0) {
+    var p = document.createElement("p");
+    p.className = "gallery-empty";
+    p.textContent = "아직 인증한 팀원이 없어요. 첫 번째가 되어 보세요!";
+    grid.appendChild(p);
+    return;
+  }
+
+  visible.forEach(function (item) {
+    var revoked = item.revoked === true;
+    var div = document.createElement("div");
+    div.className = "gallery-item" + (revoked ? " revoked" : "");
+
+    if (item.photo) {
+      var img = document.createElement("img");
+      img.src = item.photo;
+      img.alt = item.nick + " 님의 인증샷";
+      img.loading = "lazy";
+      img.addEventListener("click", function () { openLightbox(item.photo); });
+      div.appendChild(img);
+    } else if (item.test) {
+      // 관리자 테스트 체크 (사진 없음) → 플레이스홀더 타일
+      var ph = document.createElement("div");
+      ph.className = "gi-test-ph";
+      ph.textContent = "🧪 테스트 체크";
+      div.appendChild(ph);
+    }
+
+    var nickEl = document.createElement("div");
+    nickEl.className = "gi-nick";
+    nickEl.textContent = item.nick || "(닉네임 없음)";
+    div.appendChild(nickEl);
+
+    if (revoked) {
+      var tag = document.createElement("div");
+      tag.className = "gi-revoked-tag";
+      tag.textContent = "체크 해제됨";
+      div.appendChild(tag);
+    } else if (APP_STATE.isAdmin && APP_STATE.user && item.uid !== APP_STATE.user.uid) {
+      // 관리자: 타인의 유효한 인증에 [체크 해제] 버튼 (중고등부 경로)
+      var actions = document.createElement("div");
+      actions.className = "gi-actions";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-revoke";
+      btn.textContent = "체크 해제";
+      btn.addEventListener("click", function () {
+        openRevokeModal(mid, item.uid, item.nick, APP_STATE.mgViewTeam);
+      });
+      actions.appendChild(btn);
+      div.appendChild(actions);
+    }
+
+    grid.appendChild(div);
+  });
+};
+
+/* ==========================================================
+   채팅 (청년회 메인, 카카오톡 스타일)
+   ========================================================== */
+
+function openChatPanel() {
+  document.getElementById("chatModal").classList.remove("hidden");
+  scrollChatToBottom();
+}
+
+function closeChatPanel() {
+  var modal = document.getElementById("chatModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+/** 오버레이(바깥) 클릭 시에만 닫기 */
+function closeChatPanelFromOverlay(e) {
+  if (e.target === document.getElementById("chatModal")) closeChatPanel();
+}
+
+function handleChatSend() {
+  var input = document.getElementById("chatInput");
+  var text = (input.value || "").trim();
+  if (!text) return;
+  if (typeof window.fbChatSend !== "function") return;
+  input.value = "";
+  window.fbChatSend(text).catch(function (err) {
+    console.warn("메시지 전송 실패:", err);
+    showToast("메시지 전송에 실패했어요. 다시 시도해 주세요.");
+  });
+}
+
+/** 새 메시지 수신 (firebase.js의 fbChatWatch가 호출 — 기존 200개 + 신규) */
+window.onChatMessage = function (msg) {
+  var listEl = document.getElementById("chatMessages");
+  if (!listEl || !msg) return;
+
+  var isMe = !!(APP_STATE.user && msg.uid === APP_STATE.user.uid);
+  var wrap = document.createElement("div");
+  wrap.className = "chat-msg " + (isMe ? "me" : "other");
+
+  if (!isMe) {
+    var nickEl = document.createElement("div");
+    nickEl.className = "chat-nick";
+    nickEl.textContent = msg.nick || "(닉네임 없음)";
+    wrap.appendChild(nickEl);
+  }
+
+  var row = document.createElement("div");
+  row.className = "chat-row";
+
+  var bubble = document.createElement("div");
+  bubble.className = "chat-bubble";
+  bubble.textContent = msg.text; // textContent → HTML 자동 이스케이프
+
+  var time = document.createElement("span");
+  time.className = "chat-time";
+  time.textContent = formatChatTime(msg.ts);
+
+  if (isMe) {
+    row.appendChild(time);   // 카톡처럼 내 말풍선은 시간이 왼쪽
+    row.appendChild(bubble);
+  } else {
+    row.appendChild(bubble);
+    row.appendChild(time);
+  }
+  wrap.appendChild(row);
+
+  listEl.appendChild(wrap);
+  scrollChatToBottom();
+};
+
+/** 채팅 목록 비우기 (재구독/로그아웃 시 중복 방지 — firebase.js도 호출) */
+window.clearChat = function () {
+  var listEl = document.getElementById("chatMessages");
+  if (listEl) listEl.innerHTML = "";
+};
+
+function formatChatTime(ts) {
+  var d = new Date(ts || Date.now());
+  var hh = d.getHours();
+  var mm = d.getMinutes();
+  return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
+}
+
+function scrollChatToBottom() {
+  var listEl = document.getElementById("chatMessages");
+  if (listEl) listEl.scrollTop = listEl.scrollHeight;
 }
 
 /* ==========================================================
