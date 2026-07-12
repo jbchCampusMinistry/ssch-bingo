@@ -1,0 +1,20 @@
+{
+  "name": "하계수양회 빙고",
+  "short_name": "하계 빙고",
+  "description": "시흥서부교회 청년회 2026 하계수양회 빙고 미션",
+  "lang": "ko",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#3b6fd4",
+  "theme_color": "#3b6fd4",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

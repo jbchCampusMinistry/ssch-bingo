@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 하계수양회 빙고 앱 아이콘: 파랑→틸 배경 + 흰 빙고칸 + 핑크 하트 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b6fd4"/>
+      <stop offset="1" stop-color="#3ec9b0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <g fill="#ffffff">
+    <rect x="76" y="76" width="104" height="104" rx="26"/>
+    <rect x="204" y="76" width="104" height="104" rx="26"/>
+    <rect x="332" y="76" width="104" height="104" rx="26"/>
+    <rect x="76" y="204" width="104" height="104" rx="26"/>
+    <rect x="332" y="204" width="104" height="104" rx="26"/>
+    <rect x="76" y="332" width="104" height="104" rx="26"/>
+    <rect x="204" y="332" width="104" height="104" rx="26"/>
+    <rect x="332" y="332" width="104" height="104" rx="26"/>
+  </g>
+  <!-- 중앙 핑크 하트 -->
+  <path fill="#f48fb6" d="M256 322c-42-30-64-54-64-81 0-21 16-35 34-35 12 0 24 7 30 18 6-11 18-18 30-18 18 0 34 14 34 35 0 27-22 51-64 81z"/>
+  <!-- 체크 표시 -->
+  <path d="M104 244l22 26 40-46" fill="none" stroke="#6fcf5f" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M360 116l22 26 40-46" fill="none" stroke="#6fcf5f" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#3b6fd4">
+  <meta name="description" content="시흥서부교회 청년회 2026 하계수양회 빙고 미션">
+  <title>'즐거이' 하계수양회 BINGO</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="하계수양회 빙고">
+
+  <!-- Pretendard 폰트 (허용된 유일한 외부 폰트) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.css">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body onload="initApp()">
+
+  <!-- ===== 상단 장식 (포스터의 핑크 도형들) ===== -->
+  <div class="deco deco-scallop" aria-hidden="true">
+    <svg viewBox="0 0 120 40"><g fill="#f7a8c4">
+      <circle cx="20" cy="10" r="14"/><circle cx="45" cy="4" r="14"/>
+      <circle cx="70" cy="4" r="14"/><circle cx="95" cy="10" r="14"/>
+      <rect x="6" y="0" width="103" height="12"/>
+    </g></svg>
+  </div>
+  <div class="deco deco-star" aria-hidden="true">
+    <svg viewBox="0 0 100 100"><path fill="#f2a0c0" d="M46 2 L54 2 L57 38 L82 12 L88 18 L62 44 L98 46 L98 54 L62 57 L88 82 L82 88 L57 62 L54 98 L46 98 L43 62 L18 88 L12 82 L38 57 L2 54 L2 46 L38 43 L12 18 L18 12 L43 38 Z"/></svg>
+  </div>
+  <div class="deco deco-zigzag" aria-hidden="true">
+    <svg viewBox="0 0 80 90"><path fill="#f2a0c0" d="M40 0 H80 V22 H62 V52 H40 V80 H0 V58 H18 V28 H40 Z"/></svg>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 로그인 화면                                    -->
+  <!-- ============================================ -->
+  <section id="loginView" class="view">
+    <div class="hero">
+      <h1 class="app-title">
+        <span class="t-joy">'즐거이'</span>
+        <span class="t-camp">하계수양회</span>
+        <span class="t-bingo">BINGO</span>
+      </h1>
+    </div>
+    <div class="hero-wave" aria-hidden="true">
+      <svg viewBox="0 0 375 30" preserveAspectRatio="none"><path fill="#3b6fd4" d="M0 0 H375 V10 C310 30 240 2 180 14 C120 26 60 8 0 22 Z"/></svg>
+    </div>
+
+    <div class="login-body">
+      <p class="verse">오라 우리가 여호와께 노래하며 우리 구원의 반석을 향하여 <b>즐거이</b> 부르자 <span class="verse-ref">(시 95:1)</span></p>
+
+      <div class="login-card">
+        <p class="login-desc">미션을 완수하고 빙고를 채워 보세요!</p>
+        <button id="btnLogin" class="btn-google" onclick="handleLogin()">
+          <svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true">
+            <path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.3 6 29.4 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/>
+            <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.3 6 29.4 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+            <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/>
+            <path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.3-2.3 4.3-4.1 5.7l6.2 5.2C36.9 39.2 44 34 44 24c0-1.3-.1-2.6-.4-3.9z"/>
+          </svg>
+          구글로 로그인
+        </button>
+        <p id="configNotice" class="config-notice hidden"></p>
+      </div>
+    </div>
+
+    <footer class="app-footer">
+      <p class="footer-church">시흥서부교회 청년회</p>
+      <p class="footer-note">※ 모든 미션은 AI 사용 금지</p>
+    </footer>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- 메인(빙고) 화면                                -->
+  <!-- ============================================ -->
+  <section id="mainView" class="view hidden">
+    <div class="hero hero-compact">
+      <h1 class="app-title app-title-sm">
+        <span class="t-joy">'즐거이'</span>
+        <span class="t-camp">하계수양회</span>
+        <span class="t-bingo">BINGO</span>
+      </h1>
+      <div class="user-bar">
+        <span id="userNick" class="user-nick"></span>
+        <span id="adminBadge" class="admin-badge hidden">관리자</span>
+        <button class="btn-logout" onclick="handleLogout()">로그아웃</button>
+      </div>
+    </div>
+    <div class="hero-wave" aria-hidden="true">
+      <svg viewBox="0 0 375 30" preserveAspectRatio="none"><path fill="#3b6fd4" d="M0 0 H375 V10 C310 30 240 2 180 14 C120 26 60 8 0 22 Z"/></svg>
+    </div>
+
+    <main class="main-body">
+      <p class="verse">오라 우리가 여호와께 노래하며 우리 구원의 반석을 향하여 <b>즐거이</b> 부르자 <span class="verse-ref">(시 95:1)</span></p>
+
+      <!-- 내 진행 상황 요약 -->
+      <div class="my-stats">
+        <div class="stat"><span class="stat-num" id="statBingos">0</span><span class="stat-label">빙고</span></div>
+        <div class="stat"><span class="stat-num" id="statChecks">0</span><span class="stat-label">완료 미션</span></div>
+      </div>
+
+      <!-- 5×5 빙고판 (칸은 app.js가 생성) -->
+      <div class="board-wrap">
+        <div id="board" class="board" role="grid" aria-label="빙고판"></div>
+        <svg id="lineOverlay" class="line-overlay" viewBox="0 0 500 500" preserveAspectRatio="none" aria-hidden="true"></svg>
+      </div>
+
+      <!-- 순위 -->
+      <section class="rank-section">
+        <h2 class="rank-title">🏆 실시간 순위</h2>
+        <ol id="rankList" class="rank-list">
+          <li class="rank-empty">아직 참가자가 없어요</li>
+        </ol>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p class="footer-church">시흥서부교회 청년회</p>
+      <p class="footer-note">※ 모든 미션은 AI 사용 금지</p>
+    </footer>
+  </section>
+
+  <!-- ============================================ -->
+  <!-- 닉네임 설정 모달 (첫 로그인)                     -->
+  <!-- ============================================ -->
+  <div id="nickModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 class="modal-title">닉네임 설정</h2>
+      <p class="modal-desc">자기 이름으로 입력해 주세요</p>
+      <input id="nickInput" class="nick-input" type="text" maxlength="12"
+             placeholder="자기 이름으로 입력해 주세요" autocomplete="off">
+      <p id="nickError" class="field-error hidden"></p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="handleSaveNick()">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 미션 상세 모달                                 -->
+  <!-- ============================================ -->
+  <div id="missionModal" class="modal-overlay hidden" onclick="closeMissionModalFromOverlay(event)">
+    <div class="modal modal-mission">
+      <button class="modal-close" onclick="closeMissionModal()" aria-label="닫기">✕</button>
+      <p class="mission-no" id="missionNo"></p>
+      <h2 class="modal-title mission-text" id="missionText"></h2>
+
+      <!-- 내 인증 영역 -->
+      <div class="my-proof" id="myProof"></div>
+
+      <!-- 전체 인증샷 갤러리 -->
+      <h3 class="gallery-title">📸 모두의 인증샷</h3>
+      <div id="galleryGrid" class="gallery-grid">
+        <p class="gallery-empty">아직 인증한 사람이 없어요. 첫 번째가 되어 보세요!</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 관리자 패널 모달 (관리자가 헤더의 자기 이름 클릭)  -->
+  <!-- ============================================ -->
+  <div id="adminModal" class="modal-overlay hidden" onclick="closeAdminPanelFromOverlay(event)">
+    <div class="modal modal-admin">
+      <button class="modal-close" onclick="closeAdminPanel()" aria-label="닫기">✕</button>
+      <h2 class="modal-title">⚙ 관리자 패널</h2>
+
+      <!-- 뷰1: 회원 목록 -->
+      <div id="adminUsersView">
+        <p class="modal-desc">이름을 눌러 미션을 관리하거나, 관리자 권한을 부여할 수 있어요.</p>
+        <div id="adminUserList" class="admin-user-list"></div>
+      </div>
+
+      <!-- 뷰2: 회원 미션 상세 (미니 빙고판) -->
+      <div id="adminUserDetail" class="hidden">
+        <button type="button" class="btn btn-ghost btn-sm au-back" onclick="backToAdminUsers()">← 목록으로</button>
+        <p id="auName" class="au-name"></p>
+        <div id="auBoard" class="au-board"></div>
+        <p class="au-hint">색칠된(완료) 칸을 누르면 인증을 확인하고 체크를 해제할 수 있어요.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 관리자 체크 해제(코멘트) 모달                    -->
+  <!-- ============================================ -->
+  <div id="revokeModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 class="modal-title">체크 해제</h2>
+      <p class="modal-desc" id="revokeTarget"></p>
+      <textarea id="revokeComment" class="revoke-textarea" rows="3"
+                placeholder="해제 사유를 입력해 주세요 (필수)"></textarea>
+      <p id="revokeError" class="field-error hidden"></p>
+      <div class="modal-actions">
+        <button class="btn btn-danger" onclick="handleConfirmRevoke()">해제</button>
+        <button class="btn btn-ghost" onclick="closeRevokeModal()">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 사진 선택용 숨은 input -->
+  <input id="photoInput" type="file" accept="image/*" class="hidden" onchange="handlePhotoSelected(event)">
+
+  <!-- 토스트 알림 -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- 전체 로딩 스피너 -->
+  <div id="loading" class="loading-overlay hidden"><div class="spinner"></div></div>
+
+  <!-- app.js(일반 스크립트) → firebase.js(ES 모듈) 순서로 로드 -->
+  <script src="./app.js"></script>
+  <script type="module" src="./firebase.js"></script>
+</body>
+</html>
