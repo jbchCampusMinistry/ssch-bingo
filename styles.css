@@ -212,14 +212,14 @@ body {
 .stat-label { display: block; font-size: 0.72rem; font-weight: 700; color: var(--navy); opacity: 0.8; }
 
 /* ---------- 빙고판 ---------- */
-.board-wrap { position: relative; width: 100%; aspect-ratio: 1; }
+.board-wrap { position: relative; width: 100%; }
 
 .board {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  grid-template-rows: repeat(5, 1fr);
+  grid-auto-rows: minmax(64px, auto);   /* 칸 높이가 내용에 맞춰 늘어남(글자 넘침 방지) */
   gap: 8px;
-  width: 100%; height: 100%;
+  width: 100%;
 }
 
 .cell {
@@ -292,13 +292,13 @@ body {
 }
 .line-overlay line {
   stroke: rgba(229, 72, 77, 0.72);
-  stroke-width: 16;
+  stroke-width: 10;
   stroke-linecap: round;
   animation: line-pop 0.4s ease-out;
 }
 @keyframes line-pop {
   from { opacity: 0; stroke-width: 2; }
-  to { opacity: 1; stroke-width: 16; }
+  to { opacity: 1; stroke-width: 10; }
 }
 
 /* ---------- 순위 ---------- */

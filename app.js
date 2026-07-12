@@ -75,6 +75,16 @@ function initApp() {
 
   buildBoard();
 
+  // 화면 크기 변화/폰트 로드 시 빙고 줄 다시 그리기(칸 위치 재측정 → 어긋남 방지)
+  var _rzTimer = null;
+  window.addEventListener("resize", function () {
+    if (_rzTimer) clearTimeout(_rzTimer);
+    _rzTimer = setTimeout(drawBingoLines, 120);
+  });
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { drawBingoLines(); });
+  }
+
   // 닉네임 입력에서 Enter로 저장
   var nickInput = document.getElementById("nickInput");
   nickInput.addEventListener("keydown", function (e) {
@@ -186,18 +196,25 @@ function countBingos() {
 /** 완성된 줄 위에 빨간 반투명 선 오버레이 (여러 줄 동시 표시) */
 function drawBingoLines() {
   var svg = document.getElementById("lineOverlay");
-  if (!svg) return;
+  var wrap = document.querySelector(".board-wrap");
+  if (!svg || !wrap) return;
   svg.innerHTML = "";
 
-  // 칸 중심 좌표 (viewBox 500×500 기준, 셀 1칸 = 100)
+  // 실제 렌더된 칸 위치를 픽셀로 측정 → 칸 높이가 제각각이어도 줄이 정확히 정렬됨
+  var W = wrap.clientWidth, H = wrap.clientHeight;
+  if (!W || !H) return;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+
   function center(idx) {
-    return { x: (idx % 5) * 100 + 50, y: Math.floor(idx / 5) * 100 + 50 };
+    var cell = document.querySelector('.cell[data-mid="' + idx + '"]');
+    if (!cell) return null;
+    return { x: cell.offsetLeft + cell.offsetWidth / 2, y: cell.offsetTop + cell.offsetHeight / 2 };
   }
 
   BINGO_LINES.forEach(function (line) {
     if (!line.every(isChecked)) return;
-    var a = center(line[0]);
-    var b = center(line[4]);
+    var a = center(line[0]), b = center(line[4]);
+    if (!a || !b) return;
     var el = document.createElementNS("http://www.w3.org/2000/svg", "line");
     el.setAttribute("x1", a.x); el.setAttribute("y1", a.y);
     el.setAttribute("x2", b.x); el.setAttribute("y2", b.y);
