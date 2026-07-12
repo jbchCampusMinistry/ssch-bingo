@@ -600,6 +600,8 @@ body {
 .btn-grant:hover { background: var(--blue-deep); }
 .btn-grant-off { background: #eef1f5; color: #555; }
 .btn-grant-off:hover { background: #e2e6ea; }
+.btn-grant-danger { background: var(--red); }
+.btn-grant-danger:hover { background: #c93b40; }
 
 .badge-admin {
   background: var(--yellow); color: var(--navy);
@@ -655,6 +657,7 @@ body {
 .ag-item img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: zoom-in; }
 .ag-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px 6px; }
 .ag-nick {
+  flex: 1 1 auto; min-width: 0; /* 남는 폭을 차지 → ⬇/🗑 버튼이 오른쪽에 나란히 붙음 */
   font-size: 0.68rem; font-weight: 800; color: var(--navy);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -666,6 +669,14 @@ body {
   cursor: pointer;
 }
 .ag-dl:hover { background: var(--blue-deep); }
+.ag-del {
+  width: 24px; height: 24px; flex-shrink: 0;
+  border: none; border-radius: 8px;
+  background: var(--red); color: #fff;
+  font-size: 0.7rem; line-height: 1;
+  cursor: pointer;
+}
+.ag-del:hover { background: #c93b40; }
 
 /* 회원 상세 — 미니 5×5 빙고판 */
 .au-back { margin-top: 10px; }

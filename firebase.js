@@ -33,7 +33,8 @@ import {
   ref as sRef,
   uploadBytes,
   getBlob,
-  deleteObject
+  deleteObject,
+  listAll
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 /* ----------------------------------------------------------
@@ -390,13 +391,27 @@ async function uploadOriginal(path, originalFile) {
   }
 }
 
-/** 원본 삭제 (best-effort) — 실패해도 무시 */
+/** 원본 삭제 (best-effort) — 실패해도 무시.
+    ※ 호출부는 await 하지 말 것! (DELETE 요청이라 네트워크/CORS 지연 시 최대 2분 재시도 →
+      기다리면 UI가 멈춘 것처럼 보임. RTDB 반영은 먼저 끝내고 이건 백그라운드로 던진다.) */
 async function deleteOriginal(path) {
   if (!storage || typeof path !== "string" || !path) return;
   try {
     await deleteObject(sRef(storage, path));
   } catch (e) {
     console.warn("원본 삭제 실패:", path, e);
+  }
+}
+
+/** 폴더 이하 모든 원본 재귀 삭제 (best-effort, 백그라운드 — 계정 삭제 시 사용) */
+async function deleteFolderRecursive(path) {
+  if (!storage) return;
+  try {
+    const res = await listAll(sRef(storage, path));
+    await Promise.all(res.items.map((it) => deleteObject(it).catch(() => {})));
+    await Promise.all(res.prefixes.map((pre) => deleteFolderRecursive(pre.fullPath)));
+  } catch (e) {
+    console.warn("원본 폴더 정리 실패:", path, e);
   }
 }
 
@@ -456,7 +471,7 @@ window.fbDeletePhoto = async function (mid, index) {
       origs: origsForWrite(origs)
     }));
   }
-  await deleteOriginal(removedOrig); // 원본도 정리 (실패해도 무시)
+  deleteOriginal(removedOrig); // 원본은 백그라운드 정리 (await 금지 — UI 멈춤 방지)
 };
 
 /** 내 인증샷 전체 삭제 (칸 통째로 — 예전 호환용) */
@@ -630,18 +645,21 @@ window.fbGetUserSubs = async function (uid) {
    ========================================================== */
 window.fbAdminLoadAllPhotos = async function () {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  // 각 읽기를 개별 catch — 규칙 미배포 등으로 일부 노드를 못 읽어도
+  // 나머지(예: 청년회 사진)는 정상적으로 불러오도록 (전체 실패 방지)
   const [subSnap, metaA, metaB, phA, phB, ogA, ogB] = await Promise.all([
-    get(ref(db, "submissions")),
-    get(ref(db, "mgSubmissions/A")),
-    get(ref(db, "mgSubmissions/B")),
-    get(ref(db, "mgPhotos/A")),
-    get(ref(db, "mgPhotos/B")),
-    get(ref(db, "mgOrigs/A")).catch(() => null), // 규칙 미배포 등으로 못 읽어도 갤러리는 동작
+    get(ref(db, "submissions")).catch(() => null),
+    get(ref(db, "mgSubmissions/A")).catch(() => null),
+    get(ref(db, "mgSubmissions/B")).catch(() => null),
+    get(ref(db, "mgPhotos/A")).catch(() => null),
+    get(ref(db, "mgPhotos/B")).catch(() => null),
+    get(ref(db, "mgOrigs/A")).catch(() => null),
     get(ref(db, "mgOrigs/B")).catch(() => null)
   ]);
-  const subs = subSnap.exists() ? subSnap.val() : {};
-  const mgMeta = { A: metaA.exists() ? metaA.val() : {}, B: metaB.exists() ? metaB.val() : {} };
-  const mgPh = { A: phA.exists() ? phA.val() : {}, B: phB.exists() ? phB.val() : {} };
+  const ok = (snap) => snap && snap.exists();
+  const subs = ok(subSnap) ? subSnap.val() : {};
+  const mgMeta = { A: ok(metaA) ? metaA.val() : {}, B: ok(metaB) ? metaB.val() : {} };
+  const mgPh = { A: ok(phA) ? phA.val() : {}, B: ok(phB) ? phB.val() : {} };
   const mgOg = {
     A: ogA && ogA.exists() ? ogA.val() : {},
     B: ogB && ogB.exists() ? ogB.val() : {}
@@ -708,6 +726,110 @@ window.fbFetchOriginalBlob = async function (path) {
     console.warn("원본 다운로드 실패:", path, e);
     return null;
   }
+};
+
+/* ==========================================================
+   window로 노출: 관리자 — 사진 하드 삭제 / 계정 삭제
+   ========================================================== */
+
+/** 관리자: 회원의 인증샷 1장 완전 삭제 — scope: "yc"(청년회) | "A" | "B"(중고등부 팀)
+    RTDB의 참조(사진·경로)를 먼저 제거한 뒤, Storage 원본은 백그라운드로 삭제(best-effort).
+    ※ Storage 규칙이 "로그인 사용자 삭제 허용"이면 원본도 함께 지워짐. */
+window.fbAdminDeletePhoto = async function (scope, mid, uid, index) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+
+  if (scope === "yc") {
+    // 청년회 — submissions/$mid/$uid 의 photos/origs 배열에서 해당 장만 제거
+    const r = ref(db, "submissions/" + mid + "/" + uid);
+    const snap = await get(r);
+    if (!snap.exists()) return;
+    const cur = snap.val() || {};
+    const photos = photosOf(cur);
+    const origs = toOrigArray(cur.origs, photos.length);
+    const removedOrig = origs[index] || null;
+    photos.splice(index, 1); // 해당 장만 빼고 배열 재구성 → 자동 재정렬
+    origs.splice(index, 1);  // 원본 경로도 같은 인덱스로 정렬 유지
+    if (photos.length === 0) {
+      await remove(r);
+    } else {
+      await set(r, Object.assign({}, cur, {
+        photo: photos[0],
+        photos: photos,
+        origs: origsForWrite(origs)
+      }));
+    }
+    if (typeof removedOrig === "string" && removedOrig) deleteOriginal(removedOrig); // 백그라운드 정리 (await 금지)
+    return;
+  }
+
+  // 중고등부 — scope 가 곧 팀("A" | "B")
+  const team = scope;
+  const pr = ref(db, "mgPhotos/" + team + "/" + mid + "/" + uid);
+  const or = ref(db, "mgOrigs/" + team + "/" + mid + "/" + uid);
+  const mr = ref(db, "mgSubmissions/" + team + "/" + mid + "/" + uid);
+  const snap = await get(pr);
+  const photos = snap.exists() ? toPhotoArray(snap.val()) : [];
+
+  // 원본 경로도 같은 인덱스로 정렬 유지 (못 읽어도 삭제는 계속)
+  let origs = toOrigArray(null, photos.length);
+  try {
+    const oSnap = await get(or);
+    if (oSnap.exists()) origs = toOrigArray(oSnap.val(), photos.length);
+  } catch (e) { /* 무시 */ }
+
+  const removedOrig = origs[index] || null;
+  photos.splice(index, 1);
+  origs.splice(index, 1);
+  if (photos.length === 0) {
+    await remove(mr); // 메타 먼저 지워 완료 상태부터 해제
+    await remove(pr);
+    await remove(or);
+  } else {
+    await set(pr, photos);
+    await set(or, origsForWrite(origs));
+    await update(mr, { photoCount: photos.length });
+  }
+  if (typeof removedOrig === "string" && removedOrig) deleteOriginal(removedOrig); // 백그라운드 정리 (await 금지)
+};
+
+/** 관리자: 회원 계정 삭제 — 프로필/닉네임 예약/순위/권한/모든 제출을 멀티 경로 업데이트로 한 번에(원자적) 제거
+    ※ Firebase 인증(AUTH) 계정 자체는 클라이언트 SDK로는 지울 수 없어 남는다
+      → 그 사람이 다시 로그인하면 새 사용자로 취급되어 닉네임부터 다시 설정하게 됨.
+    ※ Storage 원본(originals/{uid}/...)은 삭제 후 백그라운드로 재귀 정리(best-effort). */
+window.fbAdminDeleteUser = async function (uid) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  if (uid === currentUser.uid) throw new Error("본인 계정은 삭제할 수 없어요.");
+
+  // 프로필 확인 — 마스터 관리자 보호 + 닉네임 예약 해제용 nick 확보
+  const userSnap = await get(ref(db, "users/" + uid));
+  const profile = userSnap.exists() ? userSnap.val() : {};
+  if (ADMIN_EMAILS.includes(profile.email || "")) {
+    throw new Error("마스터 관리자 계정은 삭제할 수 없어요.");
+  }
+  const nick = profile.nick || "";
+
+  // 멀티 경로 업데이트 (null = 삭제) — 하나라도 실패하면 전체 롤백
+  const updates = {};
+  updates["users/" + uid] = null;
+  updates["leaderboard/" + uid] = null;
+  updates["admins/" + uid] = null;
+  updates["mgRoles/" + uid] = null;
+  updates["mgTeams/" + uid] = null;
+  if (nick) updates["nicknames/" + nick] = null;
+  for (let mid = 0; mid < 25; mid++) {
+    updates["submissions/" + mid + "/" + uid] = null;
+  }
+  ["A", "B"].forEach((team) => {
+    for (let mid = 0; mid < 25; mid++) {
+      updates["mgSubmissions/" + team + "/" + mid + "/" + uid] = null;
+      updates["mgPhotos/" + team + "/" + mid + "/" + uid] = null;
+      updates["mgOrigs/" + team + "/" + mid + "/" + uid] = null;
+    }
+  });
+  await update(ref(db), updates);
+
+  // Storage 원본 폴더도 백그라운드 정리 (best-effort — 규칙상 로그인 사용자면 삭제 가능)
+  deleteFolderRecursive("originals/" + uid);
 };
 
 /* ==========================================================
@@ -941,7 +1063,7 @@ window.fbMgDeletePhoto = async function (team, mid, index) {
     try { await set(or, origsForWrite(origs)); } catch (e) { /* 무시 */ }
     await update(mr, { photoCount: photos.length });
   }
-  await deleteOriginal(removedOrig); // 원본도 정리 (실패해도 무시)
+  deleteOriginal(removedOrig); // 원본은 백그라운드 정리 (await 금지 — UI 멈춤 방지)
 };
 
 /** 내 인증샷 전체 삭제 (칸 통째로 — 예전 호환용, 메타 먼저 지워 완료 상태부터 해제) */

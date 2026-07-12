@@ -395,7 +395,15 @@ window.renderGallery = function (mid, items) {
     return;
   }
 
+  // 미션 전체 사진을 한 배열로 모아 클릭 시 좌우로 전부 넘겨볼 수 있게
+  var allPhotos = [];
+  var startIndexOf = [];
   visible.forEach(function (item) {
+    startIndexOf.push(allPhotos.length);
+    photosOf(item).forEach(function (p) { allPhotos.push(p); });
+  });
+
+  visible.forEach(function (item, gi) {
     var revoked = item.revoked === true;
     var div = document.createElement("div");
     div.className = "gallery-item" + (revoked ? " revoked" : "");
@@ -406,7 +414,7 @@ window.renderGallery = function (mid, items) {
       img.src = ps[0];
       img.alt = item.nick + " 님의 인증샷";
       img.loading = "lazy";
-      img.addEventListener("click", function () { openGalleryLightbox(ps, 0); });
+      img.addEventListener("click", function () { openGalleryLightbox(allPhotos, startIndexOf[gi]); });
       div.appendChild(img);
       if (ps.length > 1) {
         var badge = document.createElement("span");
@@ -1088,6 +1096,18 @@ window.renderAdminUsers = function (list) {
       }
     }
 
+    // 계정 삭제 (마스터/본인 제외) — 그 회원의 모든 사진·기록까지 지우는 위험 버튼
+    if (!isMaster && !isMe) {
+      var delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn-grant btn-grant-danger";
+      delBtn.textContent = "계정 삭제";
+      delBtn.addEventListener("click", (function (uid, nick) {
+        return function () { handleAdminDeleteUser(uid, nick); };
+      })(u.uid, displayNick));
+      right.appendChild(delBtn);
+    }
+
     row.appendChild(right);
     box.appendChild(row);
   });
@@ -1151,6 +1171,24 @@ function handleToggleAdmin(uid, nick, makeAdmin) {
       hideLoading();
       console.warn("관리자 권한 변경 실패:", err);
       showToast("권한 변경에 실패했어요. 보안 규칙이 최신인지 확인해 주세요.");
+    });
+}
+
+/** 회원 계정 삭제 — RTDB의 모든 데이터 제거 (인증 계정은 남아 재로그인 시 새 사용자로 취급) */
+function handleAdminDeleteUser(uid, nick) {
+  if (!confirm("‘" + nick + "’ 님의 계정과 모든 사진·기록을 삭제할까요?\n되돌릴 수 없어요. (다시 로그인하면 새 사용자로 등록됩니다.)")) return;
+  if (typeof window.fbAdminDeleteUser !== "function") return;
+
+  showLoading();
+  window.fbAdminDeleteUser(uid)
+    .then(function () {
+      hideLoading();
+      showToast("삭제했어요."); // 회원 목록은 fbWatchUsers 구독이 자동 갱신
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("계정 삭제 실패:", err);
+      showToast((err && err.message) || "삭제에 실패했어요.");
     });
 }
 
@@ -1363,6 +1401,15 @@ function renderAdminGallery() {
     head.appendChild(zipBtn);
     sec.appendChild(head);
 
+    // 이 미션 전체 사진을 한 배열로 모아 클릭 시 미션 내 모든 사진을 좌우로 넘겨봄
+    var mPhotos = [];
+    m.groups.forEach(function (g) {
+      g.entries.forEach(function (entry) {
+        entry.photos.forEach(function (src) { mPhotos.push(src); });
+      });
+    });
+    var gIdx = 0;
+
     m.groups.forEach(function (g) {
       if (!g.entries.length) return;
       var gTitle = document.createElement("p");
@@ -1374,7 +1421,8 @@ function renderAdminGallery() {
       grid.className = "ag-grid";
       g.entries.forEach(function (entry) {
         entry.photos.forEach(function (src, n) {
-          grid.appendChild(buildAgItem(m, g.source, entry, src, n));
+          grid.appendChild(buildAgItem(m, g.source, entry, src, n, mPhotos, gIdx));
+          gIdx++;
         });
       });
       sec.appendChild(grid);
@@ -1397,7 +1445,7 @@ function renderAdminGallery() {
 }
 
 /** 관리자 갤러리 썸네일 1개 — 클릭: 라이트박스 / ⬇: 개별 다운로드 */
-function buildAgItem(mission, source, entry, src, n) {
+function buildAgItem(mission, source, entry, src, n, missionPhotos, globalIndex) {
   var item = document.createElement("div");
   item.className = "ag-item" + (entry.revoked ? " revoked" : "");
 
@@ -1405,7 +1453,9 @@ function buildAgItem(mission, source, entry, src, n) {
   img.src = src;
   img.alt = entry.nick + " 님의 인증샷";
   img.loading = "lazy";
-  img.addEventListener("click", function () { openGalleryLightbox(entry.photos, n); });
+  var lbPhotos = missionPhotos || entry.photos; // 미션 전체 사진(있으면) 아니면 이 회원 사진
+  var lbStart = (typeof globalIndex === "number") ? globalIndex : n;
+  img.addEventListener("click", function () { openGalleryLightbox(lbPhotos, lbStart); });
   item.appendChild(img);
 
   var meta = document.createElement("div");
@@ -1429,8 +1479,42 @@ function buildAgItem(mission, source, entry, src, n) {
   });
   meta.appendChild(dl);
 
+  // 🗑 개별 삭제 (관리자) — 소속 문자열 → 삭제 범위 ("청년회"→yc / A팀→A / B팀→B)
+  if (APP_STATE.isAdmin) {
+    var scope = source === "청년회" ? "yc" : (source.indexOf("A팀") !== -1 ? "A" : "B");
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "ag-del";
+    del.title = "사진 삭제";
+    del.setAttribute("aria-label", "사진 삭제");
+    del.textContent = "🗑";
+    del.addEventListener("click", function () {
+      handleAdminDeletePhoto(mission.mid, scope, entry.uid, n, entry.nick);
+    });
+    meta.appendChild(del);
+  }
+
   item.appendChild(meta);
   return item;
+}
+
+/** 관리자: 인증샷 1장 하드 삭제 — scope: "yc"(청년회) | "A" | "B"(중고등부 팀) */
+function handleAdminDeletePhoto(mid, scope, uid, index, nick) {
+  if (!confirm("‘" + nick + "’ 님의 이 사진을 완전히 삭제할까요? 되돌릴 수 없어요.")) return;
+  if (typeof window.fbAdminDeletePhoto !== "function") return;
+
+  showLoading();
+  window.fbAdminDeletePhoto(scope, mid, uid, index)
+    .then(function () {
+      hideLoading();
+      showToast("사진을 삭제했어요.");
+      handleAdminLoadPhotos(); // 갤러리 새로고침
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("사진 삭제 실패:", err);
+      showToast("삭제에 실패했어요. 다시 시도해 주세요.");
+    });
 }
 
 /** 파일명에 쓸 수 없는 문자 제거 (윈도우 금지문자 / \ : * ? " < > | + Firebase 키 금지문자 . # $ [ ]) */
@@ -2046,7 +2130,15 @@ window.renderMgGallery = function (mid, items) {
     return;
   }
 
+  // 미션 전체 사진을 한 배열로 모아 클릭 시 좌우로 전부 넘겨볼 수 있게
+  var allPhotos = [];
+  var startIndexOf = [];
   visible.forEach(function (item) {
+    startIndexOf.push(allPhotos.length);
+    photosOf(item).forEach(function (p) { allPhotos.push(p); });
+  });
+
+  visible.forEach(function (item, gi) {
     var revoked = item.revoked === true;
     var div = document.createElement("div");
     div.className = "gallery-item" + (revoked ? " revoked" : "");
@@ -2057,7 +2149,7 @@ window.renderMgGallery = function (mid, items) {
       img.src = ps[0];
       img.alt = item.nick + " 님의 인증샷";
       img.loading = "lazy";
-      img.addEventListener("click", function () { openGalleryLightbox(ps, 0); });
+      img.addEventListener("click", function () { openGalleryLightbox(allPhotos, startIndexOf[gi]); });
       div.appendChild(img);
       if (ps.length > 1) {
         var badge = document.createElement("span");
