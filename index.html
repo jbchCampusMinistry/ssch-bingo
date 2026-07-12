@@ -229,6 +229,12 @@
       <button class="modal-close" onclick="closeAdminPanel()" aria-label="닫기">✕</button>
       <h2 class="modal-title">⚙ 관리자 패널</h2>
 
+      <!-- 상단 탭: 회원 / 갤러리 -->
+      <div class="admin-tabs" role="tablist" aria-label="관리자 패널 탭">
+        <button type="button" id="adminTabUsers" class="admin-tab active" onclick="handleAdminTab('users')">👥 회원</button>
+        <button type="button" id="adminTabGallery" class="admin-tab" onclick="handleAdminTab('gallery')">🖼 갤러리</button>
+      </div>
+
       <!-- 뷰1: 회원 목록 -->
       <div id="adminUsersView">
         <p class="modal-desc">이름을 눌러 미션을 관리하거나, 관리자 권한을 부여할 수 있어요.</p>
@@ -241,6 +247,18 @@
         <p id="auName" class="au-name"></p>
         <div id="auBoard" class="au-board"></div>
         <p class="au-hint">색칠된(완료) 칸을 누르면 인증을 확인하고 체크를 해제할 수 있어요.</p>
+      </div>
+
+      <!-- 뷰3: 관리자 갤러리 (행사 전체 사진 보기/다운로드) -->
+      <div id="adminGalleryView" class="hidden">
+        <p class="modal-desc">행사 전체 인증사진을 미션별로 모아 봐요.<br>갤러리와 압축본 ZIP은 업로드 시 압축된 사진이에요.</p>
+        <div class="ag-toolbar">
+          <button type="button" id="agLoadBtn" class="btn btn-primary btn-sm" onclick="handleAdminLoadPhotos()">사진 불러오기</button>
+          <button type="button" id="agZipAllBtn" class="btn btn-ghost btn-sm hidden" onclick="handleZipAll()">⬇ 압축본 ZIP</button>
+          <button type="button" id="agZipOrigBtn" class="btn btn-ghost btn-sm hidden" onclick="handleZipOriginals()">⬇ 원본 전체 ZIP</button>
+        </div>
+        <p class="au-hint">원본 ZIP은 Firebase Storage(Blaze)에 저장된 원본을 내려받습니다. 원본이 없는 사진은 건너뜁니다.</p>
+        <div id="adminGalleryContent" class="ag-content"></div>
       </div>
     </div>
   </div>

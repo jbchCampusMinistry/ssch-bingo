@@ -60,6 +60,7 @@ var APP_STATE = {
   currentMid: null,    // 열려 있는 미션 상세 모달의 미션 번호
   revokeTarget: null,  // { mid, uid, nick, mgTeam? } 체크 해제 대상
   adminDetail: null,   // { uid, nick } 관리자 패널에서 보고 있는 회원
+  adminGallery: null,  // { missions: [...] } 관리자 갤러리 데이터 (사진 불러오기 후)
   uploading: false,
 
   /* ---------- 중고등부(팀 빙고) ---------- */
@@ -86,10 +87,10 @@ function initApp() {
   var _rzTimer = null;
   window.addEventListener("resize", function () {
     if (_rzTimer) clearTimeout(_rzTimer);
-    _rzTimer = setTimeout(function () { drawBingoLines(); drawMgBingoLines(); }, 120);
+    _rzTimer = setTimeout(relayoutBoards, 120);
   });
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(function () { drawBingoLines(); drawMgBingoLines(); });
+    document.fonts.ready.then(relayoutBoards);
   }
 
   // 닉네임 입력에서 Enter로 저장
@@ -160,6 +161,20 @@ function buildBoard() {
 
     board.appendChild(cell);
   }
+}
+
+/** 제출 객체에서 사진 배열 추출 — photos 배열 우선, 없으면 예전 단일 photo 값 (하위 호환) */
+function photosOf(sub) {
+  if (!sub) return [];
+  if (sub.photos && sub.photos.length) {
+    var arr = [];
+    var k;
+    for (k = 0; k < sub.photos.length; k++) {
+      if (typeof sub.photos[k] === "string" && sub.photos[k]) arr.push(sub.photos[k]);
+    }
+    if (arr.length) return arr;
+  }
+  return sub.photo ? [sub.photo] : [];
 }
 
 /** mid 칸이 "체크됨" 상태인지 (사진 인증 or 관리자 테스트 체크 && 해제 안 됨) */
@@ -242,6 +257,35 @@ function drawBingoLines() {
   drawLinesGeneric("boardWrap", "board", "lineOverlay", isChecked);
 }
 
+/**
+ * 모든 칸을 "가장 긴 글자를 가진 칸" 높이에 맞춰 동일 크기로 통일.
+ * (칸 내용은 고정이라 실제로는 화면 폭이 바뀔 때만 높이가 달라짐)
+ * @param {string} boardId "board" 또는 "mgBoard"
+ */
+function equalizeBoard(boardId) {
+  var board = document.getElementById(boardId);
+  if (!board) return;
+  var cells = board.querySelectorAll(".cell");
+  if (!cells.length) return;
+
+  board.style.gridAutoRows = "auto"; // 자연 높이로 되돌려 측정
+  var max = 0, i;
+  for (i = 0; i < cells.length; i++) {
+    var h = cells[i].offsetHeight; // 측정 시 강제 리플로우
+    if (h > max) max = h;
+  }
+  // 숨겨진(offsetHeight=0) 상태에서 호출되면 건드리지 않음 → 보일 때 다시 호출
+  if (max > 0) board.style.gridAutoRows = max + "px";
+}
+
+/** 두 보드 모두 크기 통일 + 빙고 줄 다시 그리기 (리사이즈/폰트 로드 시) */
+function relayoutBoards() {
+  equalizeBoard("board");
+  drawBingoLines();
+  equalizeBoard("mgBoard");
+  drawMgBingoLines();
+}
+
 /* ==========================================================
    화면 전환 (firebase.js가 호출)
    ========================================================== */
@@ -300,6 +344,8 @@ window.showMain = function (user, nick, isAdmin) {
 
   buildBoard();
   refreshBoard();
+  equalizeBoard("board"); // 화면이 보이는 지금 칸 크기 통일
+  drawBingoLines();
   hideLoading();
 };
 
@@ -354,13 +400,20 @@ window.renderGallery = function (mid, items) {
     var div = document.createElement("div");
     div.className = "gallery-item" + (revoked ? " revoked" : "");
 
-    if (item.photo) {
+    var ps = photosOf(item); // 대표 사진 = ps[0]
+    if (ps.length > 0) {
       var img = document.createElement("img");
-      img.src = item.photo;
+      img.src = ps[0];
       img.alt = item.nick + " 님의 인증샷";
       img.loading = "lazy";
-      img.addEventListener("click", function () { openLightbox(item.photo); });
+      img.addEventListener("click", function () { openGalleryLightbox(ps, 0); });
       div.appendChild(img);
+      if (ps.length > 1) {
+        var badge = document.createElement("span");
+        badge.className = "gi-count";
+        badge.textContent = "📷 x" + ps.length;
+        div.appendChild(badge);
+      }
     } else if (item.test) {
       // 관리자 테스트 체크 (사진 없음) → 플레이스홀더 타일
       var ph = document.createElement("div");
@@ -566,39 +619,19 @@ function renderMyProof(mid) {
     box.appendChild(cmt);
   }
 
-  if (sub && sub.photo) {
-    var img = document.createElement("img");
-    img.src = sub.photo;
-    img.alt = "내 인증샷";
-    img.addEventListener("click", function () { openLightbox(sub.photo); });
-    box.appendChild(img);
-
-    var btns = document.createElement("div");
-    btns.className = "my-proof-btns";
-
-    var reBtn = document.createElement("button");
-    reBtn.type = "button";
-    reBtn.className = "btn btn-primary btn-sm";
-    reBtn.textContent = "다시 올리기";
-    reBtn.addEventListener("click", pickPhoto);
-    btns.appendChild(reBtn);
-
-    var delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn btn-ghost btn-sm";
-    delBtn.textContent = "삭제";
-    delBtn.addEventListener("click", function () {
-      if (!confirm("인증사진을 삭제할까요? 칸 체크도 함께 사라져요.")) return;
-      if (typeof window.fbDeleteSubmission === "function") {
-        showLoading();
-        window.fbDeleteSubmission(mid)
-          .then(function () { hideLoading(); showToast("삭제했어요."); })
-          .catch(function () { hideLoading(); showToast("삭제에 실패했어요. 다시 시도해 주세요."); });
-      }
-    });
-    btns.appendChild(delBtn);
-
-    box.appendChild(btns);
+  var photos = photosOf(sub);
+  if (photos.length > 0) {
+    // 내 사진들(최대 3장) 썸네일 + 장별 ✕ 삭제
+    box.appendChild(buildMyPhotoThumbs(photos, function (idx) {
+      if (!confirm("이 사진을 삭제할까요?" +
+        (photos.length === 1 ? " 마지막 사진이라 칸 체크도 함께 사라져요." : ""))) return;
+      if (typeof window.fbDeletePhoto !== "function") return;
+      showLoading();
+      window.fbDeletePhoto(mid, idx)
+        .then(function () { hideLoading(); showToast("사진을 삭제했어요."); })
+        .catch(function () { hideLoading(); showToast("삭제에 실패했어요. 다시 시도해 주세요."); });
+    }));
+    appendPhotoLimitUi(box, photos.length);
   } else if (sub && sub.test) {
     // 관리자 테스트 체크 상태 (사진 없음)
     var testInfo = document.createElement("p");
@@ -614,6 +647,7 @@ function renderMyProof(mid) {
       offBtn.addEventListener("click", function () { handleTestCheck(mid, false); });
       box.appendChild(offBtn);
     }
+    appendPhotoHint(box);
   } else {
     var upBtn = document.createElement("button");
     upBtn.type = "button";
@@ -631,7 +665,76 @@ function renderMyProof(mid) {
       onBtn.addEventListener("click", function () { handleTestCheck(mid, true); });
       box.appendChild(onBtn);
     }
+    appendPhotoHint(box);
   }
+}
+
+/* ---------- "내 인증" 사진 여러 장(최대 3장) 공용 UI ---------- */
+
+/** 내 사진 썸네일 한 줄 — 클릭: 스와이프 라이트박스 / ✕: 해당 장 삭제 (onDelete(idx) 호출) */
+function buildMyPhotoThumbs(photos, onDelete) {
+  var row = document.createElement("div");
+  row.className = "mp-thumbs";
+
+  photos.forEach(function (src, idx) {
+    var wrap = document.createElement("div");
+    wrap.className = "mp-thumb";
+
+    var img = document.createElement("img");
+    img.src = src;
+    img.alt = "내 인증샷 " + (idx + 1);
+    img.addEventListener("click", function () { openGalleryLightbox(photos, idx); });
+    wrap.appendChild(img);
+
+    // 첫 번째 사진이 대표(썸네일) 사진
+    if (idx === 0) {
+      var rep = document.createElement("span");
+      rep.className = "mp-rep-badge";
+      rep.textContent = "대표";
+      wrap.appendChild(rep);
+    }
+
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "mp-del";
+    del.setAttribute("aria-label", (idx + 1) + "번째 사진 삭제");
+    del.textContent = "✕";
+    del.addEventListener("click", function () { onDelete(idx); });
+    wrap.appendChild(del);
+
+    row.appendChild(wrap);
+  });
+
+  return row;
+}
+
+/** 사진 추가 버튼(3장 미만) 또는 최대 도달 안내 + 3장 제한 안내문 */
+function appendPhotoLimitUi(box, count) {
+  if (count < 3) {
+    var btns = document.createElement("div");
+    btns.className = "my-proof-btns";
+    var addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "btn btn-primary btn-sm";
+    addBtn.textContent = "＋ 사진 추가";
+    addBtn.addEventListener("click", pickPhoto);
+    btns.appendChild(addBtn);
+    box.appendChild(btns);
+  } else {
+    var maxNote = document.createElement("p");
+    maxNote.className = "mp-max-note";
+    maxNote.textContent = "최대 3장을 모두 올렸어요.";
+    box.appendChild(maxNote);
+  }
+  appendPhotoHint(box);
+}
+
+/** "최대 3장" 안내문 — 내 인증 영역에 항상 표시 */
+function appendPhotoHint(box) {
+  var hint = document.createElement("p");
+  hint.className = "mp-hint";
+  hint.textContent = "사진은 한 칸에 최대 3장까지 올릴 수 있어요. (처음 올린 사진이 대표 사진이에요)";
+  box.appendChild(hint);
 }
 
 /** 관리자 테스트 체크/해제 처리 */
@@ -660,11 +763,12 @@ function pickPhoto() {
 }
 
 function handlePhotoSelected(e) {
-  var file = e.target.files && e.target.files[0];
+  // 원본 파일을 input 초기화 전에 확보 — 압축본(RTDB)과 별개로 Storage에 보존용 업로드
+  var originalFile = e.target.files && e.target.files[0];
   e.target.value = ""; // 같은 파일 재선택 가능하게 초기화
-  if (!file || APP_STATE.currentMid === null) return;
+  if (!originalFile || APP_STATE.currentMid === null) return;
 
-  if (!/^image\//.test(file.type)) {
+  if (!/^image\//.test(originalFile.type)) {
     showToast("이미지 파일만 올릴 수 있어요.");
     return;
   }
@@ -672,19 +776,20 @@ function handlePhotoSelected(e) {
   APP_STATE.uploading = true;
   showLoading();
 
-  compressImage(file)
+  compressImage(originalFile)
     .then(function (dataUrl) {
       // 중고등부 모드면 팀 보드로, 아니면 기존 청년회 경로로 업로드
+      // (원본 파일도 함께 전달 → Storage 아카이브는 best-effort, 실패해도 압축본은 저장됨)
       if (APP_STATE.mgMode) {
         if (typeof window.fbMgUpload !== "function") {
           throw new Error("Firebase 미연결");
         }
-        return window.fbMgUpload(APP_STATE.mgViewTeam, APP_STATE.currentMid, dataUrl);
+        return window.fbMgUpload(APP_STATE.mgViewTeam, APP_STATE.currentMid, dataUrl, originalFile);
       }
       if (typeof window.fbUploadSubmission !== "function") {
         throw new Error("Firebase 미연결");
       }
-      return window.fbUploadSubmission(APP_STATE.currentMid, dataUrl);
+      return window.fbUploadSubmission(APP_STATE.currentMid, dataUrl, originalFile);
     })
     .then(function () {
       APP_STATE.uploading = false;
@@ -697,7 +802,9 @@ function handlePhotoSelected(e) {
       console.warn("업로드 실패:", err);
       showToast(err && err.message === "TOO_LARGE"
         ? "사진 용량을 줄이지 못했어요. 다른 사진으로 시도해 주세요."
-        : "업로드에 실패했어요. 네트워크를 확인해 주세요.");
+        : err && err.message === "MAX_PHOTOS"
+          ? "한 칸에 최대 3장까지만 올릴 수 있어요."
+          : "업로드에 실패했어요. 네트워크를 확인해 주세요.");
     });
 }
 
@@ -834,21 +941,29 @@ function handleConfirmRevoke() {
    관리자 패널 (헤더의 자기 이름 클릭 → 열림)
    ========================================================== */
 
-/** 관리자 패널 열기 — 회원 목록 뷰 + 실시간 구독 시작 */
+/** 관리자 패널 열기 — 회원 목록 탭 + 실시간 구독 시작 */
 function openAdminPanel() {
   if (!APP_STATE.isAdmin) return;
   APP_STATE.adminDetail = null;
-  document.getElementById("adminUsersView").classList.remove("hidden");
-  document.getElementById("adminUserDetail").classList.add("hidden");
+  handleAdminTab("users");
   document.getElementById("adminModal").classList.remove("hidden");
   if (typeof window.fbWatchUsers === "function") window.fbWatchUsers();
 }
 
-/** 관리자 패널 닫기 — 구독 해제 */
+/** 관리자 패널 닫기 — 구독 해제 + 갤러리 데이터 비우기 (사진이 커서 메모리 해제) */
 function closeAdminPanel() {
   APP_STATE.adminDetail = null;
+  APP_STATE.adminGallery = null;
   var modal = document.getElementById("adminModal");
   if (modal) modal.classList.add("hidden");
+  var agc = document.getElementById("adminGalleryContent");
+  if (agc) agc.innerHTML = "";
+  var zipAll = document.getElementById("agZipAllBtn");
+  if (zipAll) zipAll.classList.add("hidden");
+  var zipOrig = document.getElementById("agZipOrigBtn");
+  if (zipOrig) { zipOrig.classList.add("hidden"); zipOrig.disabled = false; zipOrig.textContent = "⬇ 원본 전체 ZIP"; }
+  var loadBtn = document.getElementById("agLoadBtn");
+  if (loadBtn) { loadBtn.disabled = false; loadBtn.textContent = "사진 불러오기"; }
   if (typeof window.fbUnwatchUsers === "function") window.fbUnwatchUsers();
 }
 
@@ -1121,11 +1236,15 @@ function openAdminCell(uid, nick, mid, sub) {
   mission.textContent = MISSIONS[mid];
   card.appendChild(mission);
 
-  if (sub && sub.photo) {
-    var img = document.createElement("img");
-    img.src = sub.photo;
-    img.alt = nick + " 님의 인증샷";
-    card.appendChild(img);
+  var photos = photosOf(sub);
+  if (photos.length > 0) {
+    photos.forEach(function (src, idx) {
+      var img = document.createElement("img");
+      img.src = src;
+      img.alt = nick + " 님의 인증샷 " + (idx + 1);
+      img.addEventListener("click", function () { openGalleryLightbox(photos, idx); });
+      card.appendChild(img);
+    });
   } else {
     var ph = document.createElement("p");
     ph.className = "ac-pop-test";
@@ -1163,6 +1282,330 @@ function backToAdminUsers() {
   APP_STATE.adminDetail = null;
   document.getElementById("adminUserDetail").classList.add("hidden");
   document.getElementById("adminUsersView").classList.remove("hidden");
+}
+
+/* ==========================================================
+   관리자 갤러리 — 행사 전체 사진 보기 / 개별·ZIP 다운로드
+   (읽기 비용이 커서 [사진 불러오기] 버튼을 눌러야 조회)
+   ========================================================== */
+
+/** 관리자 패널 탭 전환 ("users" | "gallery") */
+function handleAdminTab(tab) {
+  if (!APP_STATE.isAdmin) return;
+  var isGallery = tab === "gallery";
+  var usersTab = document.getElementById("adminTabUsers");
+  var galTab = document.getElementById("adminTabGallery");
+  if (usersTab) usersTab.classList.toggle("active", !isGallery);
+  if (galTab) galTab.classList.toggle("active", isGallery);
+  document.getElementById("adminUsersView").classList.toggle("hidden", isGallery);
+  document.getElementById("adminUserDetail").classList.add("hidden");
+  document.getElementById("adminGalleryView").classList.toggle("hidden", !isGallery);
+  if (!isGallery) APP_STATE.adminDetail = null;
+}
+
+/** [사진 불러오기] — 청년회 + 중고등부 A/B 전체 사진 일괄 조회 */
+function handleAdminLoadPhotos() {
+  if (!APP_STATE.isAdmin) return;
+  if (typeof window.fbAdminLoadAllPhotos !== "function") return;
+  var loadBtn = document.getElementById("agLoadBtn");
+  if (loadBtn) loadBtn.disabled = true;
+  showLoading();
+  window.fbAdminLoadAllPhotos()
+    .then(function (data) {
+      hideLoading();
+      APP_STATE.adminGallery = data || { missions: [] };
+      renderAdminGallery();
+      if (loadBtn) { loadBtn.textContent = "다시 불러오기"; loadBtn.disabled = false; }
+    })
+    .catch(function (err) {
+      hideLoading();
+      if (loadBtn) loadBtn.disabled = false;
+      console.warn("전체 사진 조회 실패:", err);
+      showToast("사진을 불러오지 못했어요. 다시 시도해 주세요.");
+    });
+}
+
+/** 관리자 갤러리 렌더 — 미션별 × 소속(청년회/중고등부 A·B팀)별 그룹 */
+function renderAdminGallery() {
+  var content = document.getElementById("adminGalleryContent");
+  if (!content) return;
+  content.innerHTML = "";
+
+  var missions = (APP_STATE.adminGallery && APP_STATE.adminGallery.missions) || [];
+  var total = 0;
+
+  missions.forEach(function (m) {
+    // 이 미션의 사진 수 (사진 없는 미션 섹션은 생략)
+    var mCount = 0;
+    m.groups.forEach(function (g) {
+      g.entries.forEach(function (e) { mCount += e.photos.length; });
+    });
+    if (mCount === 0) return;
+    total += mCount;
+
+    var sec = document.createElement("section");
+    sec.className = "ag-mission";
+
+    var head = document.createElement("div");
+    head.className = "ag-mission-head";
+    var title = document.createElement("h4");
+    title.className = "ag-mission-title";
+    title.textContent = "MISSION " + (m.mid + 1) + " · " + (m.title || MISSIONS[m.mid] || "");
+    head.appendChild(title);
+
+    var zipBtn = document.createElement("button");
+    zipBtn.type = "button";
+    zipBtn.className = "btn btn-ghost btn-sm ag-zip-btn";
+    zipBtn.textContent = "이 미션 전체 저장(ZIP)";
+    zipBtn.addEventListener("click", (function (mission) {
+      return function () { handleZipMission(mission); };
+    })(m));
+    head.appendChild(zipBtn);
+    sec.appendChild(head);
+
+    m.groups.forEach(function (g) {
+      if (!g.entries.length) return;
+      var gTitle = document.createElement("p");
+      gTitle.className = "ag-group-title";
+      gTitle.textContent = g.source;
+      sec.appendChild(gTitle);
+
+      var grid = document.createElement("div");
+      grid.className = "ag-grid";
+      g.entries.forEach(function (entry) {
+        entry.photos.forEach(function (src, n) {
+          grid.appendChild(buildAgItem(m, g.source, entry, src, n));
+        });
+      });
+      sec.appendChild(grid);
+    });
+
+    content.appendChild(sec);
+  });
+
+  if (total === 0) {
+    var p = document.createElement("p");
+    p.className = "gallery-empty";
+    p.textContent = "아직 업로드된 사진이 없어요.";
+    content.appendChild(p);
+  }
+
+  var zipAll = document.getElementById("agZipAllBtn");
+  if (zipAll) zipAll.classList.toggle("hidden", total === 0);
+  var zipOrig = document.getElementById("agZipOrigBtn");
+  if (zipOrig) zipOrig.classList.toggle("hidden", total === 0);
+}
+
+/** 관리자 갤러리 썸네일 1개 — 클릭: 라이트박스 / ⬇: 개별 다운로드 */
+function buildAgItem(mission, source, entry, src, n) {
+  var item = document.createElement("div");
+  item.className = "ag-item" + (entry.revoked ? " revoked" : "");
+
+  var img = document.createElement("img");
+  img.src = src;
+  img.alt = entry.nick + " 님의 인증샷";
+  img.loading = "lazy";
+  img.addEventListener("click", function () { openGalleryLightbox(entry.photos, n); });
+  item.appendChild(img);
+
+  var meta = document.createElement("div");
+  meta.className = "ag-meta";
+
+  var nick = document.createElement("span");
+  nick.className = "ag-nick";
+  nick.textContent = (entry.nick || "(닉네임 없음)") + (entry.revoked ? " (해제됨)" : "");
+  meta.appendChild(nick);
+
+  var dl = document.createElement("button");
+  dl.type = "button";
+  dl.className = "ag-dl";
+  dl.title = "개별 다운로드";
+  dl.setAttribute("aria-label", "개별 다운로드");
+  dl.textContent = "⬇";
+  dl.addEventListener("click", function () {
+    downloadDataUrl(src,
+      "M" + (mission.mid + 1) + "_" + sanitizeFileName(source) + "_" +
+      sanitizeFileName(entry.nick) + "_" + (n + 1) + ".jpg");
+  });
+  meta.appendChild(dl);
+
+  item.appendChild(meta);
+  return item;
+}
+
+/** 파일명에 쓸 수 없는 문자 제거 (윈도우 금지문자 / \ : * ? " < > | + Firebase 키 금지문자 . # $ [ ]) */
+function sanitizeFileName(name) {
+  var cleaned = String(name || "").replace(/[\/\\:*?"<>|.#$\[\]\s]+/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || "이름없음";
+}
+
+/** dataURL을 파일로 다운로드 (download 속성 앵커) */
+function downloadDataUrl(dataUrl, filename) {
+  var a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/* ---------- ZIP 다운로드 (JSZip은 처음 누를 때만 CDN에서 지연 로드) ---------- */
+
+var _jszipPromise = null;
+function loadJSZip() {
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  if (_jszipPromise) return _jszipPromise;
+  _jszipPromise = new Promise(function (resolve, reject) {
+    var s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
+    s.onload = function () { resolve(window.JSZip); };
+    s.onerror = function () { _jszipPromise = null; reject(new Error("JSZip 로드 실패")); };
+    document.head.appendChild(s);
+  });
+  return _jszipPromise;
+}
+
+/** 미션 목록을 ZIP으로 묶어 다운로드 — 경로: mission-N/소속/닉네임_n.jpg */
+function downloadMissionsZip(missions, zipName) {
+  showLoading();
+  loadJSZip()
+    .then(function (JSZip) {
+      var zip = new JSZip();
+      var count = 0;
+      (missions || []).forEach(function (m) {
+        m.groups.forEach(function (g) {
+          g.entries.forEach(function (entry) {
+            entry.photos.forEach(function (src, n) {
+              var comma = src.indexOf(",");
+              if (comma < 0) return; // dataURL이 아니면 건너뜀
+              var path = "mission-" + (m.mid + 1) + "/" + sanitizeFileName(g.source) + "/" +
+                sanitizeFileName(entry.nick) + "_" + (n + 1) + ".jpg";
+              zip.file(path, src.slice(comma + 1), { base64: true });
+              count++;
+            });
+          });
+        });
+      });
+      if (count === 0) throw new Error("EMPTY");
+      return zip.generateAsync({ type: "blob" });
+    })
+    .then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = zipName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      hideLoading();
+      showToast("ZIP 파일을 저장했어요.");
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("ZIP 생성 실패:", err);
+      showToast(err && err.message === "EMPTY"
+        ? "저장할 사진이 없어요."
+        : "ZIP 생성에 실패했어요. 네트워크를 확인해 주세요.");
+    });
+}
+
+/** 미션 1개 ZIP */
+function handleZipMission(mission) {
+  downloadMissionsZip([mission], "bingo_mission-" + (mission.mid + 1) + ".zip");
+}
+
+/** 전체 사진 ZIP (압축본 — RTDB에 저장된 압축 사진) */
+function handleZipAll() {
+  var missions = (APP_STATE.adminGallery && APP_STATE.adminGallery.missions) || [];
+  downloadMissionsZip(missions, "bingo_photos_all.zip");
+}
+
+/** 원본 전체 ZIP — Firebase Storage에 아카이브된 원본을 한 장씩 받아 압축
+    원본이 없는 사진(Blaze 미설정 시기 업로드/예전 데이터)은 건너뛰고 개수만 집계 */
+function handleZipOriginals() {
+  if (typeof window.fbFetchOriginalBlob !== "function") return;
+  var missions = (APP_STATE.adminGallery && APP_STATE.adminGallery.missions) || [];
+
+  // 받을 원본 목록 수집 — {path, zipPath}, 원본 경로가 없는 사진은 skipped로 집계
+  var tasks = [];
+  var skipped = 0;
+  missions.forEach(function (m) {
+    m.groups.forEach(function (g) {
+      g.entries.forEach(function (entry) {
+        var origs = entry.origs || []; // photos와 같은 인덱스 (없으면 전부 원본 없음 취급)
+        entry.photos.forEach(function (src, n) {
+          var path = origs[n];
+          if (typeof path !== "string" || !path) { skipped++; return; }
+          var dot = path.lastIndexOf(".");
+          var ext = dot >= 0 ? path.slice(dot + 1) : "jpg";
+          if (!/^[a-zA-Z0-9]{1,5}$/.test(ext)) ext = "jpg";
+          tasks.push({
+            path: path,
+            zipPath: "mission-" + (m.mid + 1) + "/" + sanitizeFileName(g.source) + "/" +
+              sanitizeFileName(entry.nick) + "_" + (n + 1) + "." + ext
+          });
+        });
+      });
+    });
+  });
+
+  if (tasks.length === 0) {
+    showToast("저장할 원본이 없어요. (Storage에 아카이브된 원본 없음)");
+    return;
+  }
+
+  var btn = document.getElementById("agZipOrigBtn");
+  function resetBtn() {
+    if (btn) { btn.disabled = false; btn.textContent = "⬇ 원본 전체 ZIP"; }
+  }
+  if (btn) btn.disabled = true;
+  showLoading();
+
+  loadJSZip()
+    .then(function (JSZip) {
+      var zip = new JSZip();
+      var saved = 0;
+      var i = 0;
+      // 한 장씩 순차 다운로드 (대량 병렬 요청 방지) — 실패한 장은 건너뜀
+      function next() {
+        if (i >= tasks.length) return Promise.resolve();
+        var t = tasks[i++];
+        if (btn) btn.textContent = "원본 받는 중… " + i + "/" + tasks.length;
+        return window.fbFetchOriginalBlob(t.path).then(function (blob) {
+          if (blob) { zip.file(t.zipPath, blob); saved++; }
+          else skipped++;
+          return next();
+        });
+      }
+      return next().then(function () {
+        if (saved === 0) throw new Error("EMPTY_ORIG");
+        return zip.generateAsync({ type: "blob" }).then(function (blob) {
+          return { blob: blob, saved: saved };
+        });
+      });
+    })
+    .then(function (res) {
+      var url = URL.createObjectURL(res.blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "bingo_originals_all.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      hideLoading();
+      resetBtn();
+      showToast("원본 " + res.saved + "장 저장됨" + (skipped > 0 ? " · " + skipped + "장은 원본 없음" : ""));
+    })
+    .catch(function (err) {
+      hideLoading();
+      resetBtn();
+      console.warn("원본 ZIP 생성 실패:", err);
+      showToast(err && err.message === "EMPTY_ORIG"
+        ? "원본을 하나도 받지 못했어요. Storage(Blaze) 설정을 확인해 주세요."
+        : "원본 ZIP 생성에 실패했어요. 네트워크를 확인해 주세요.");
+    });
 }
 
 /* ==========================================================
@@ -1216,6 +1659,8 @@ function enterMgView(team) {
 
   buildMgBoard();
   refreshMgView();
+  equalizeBoard("mgBoard"); // 화면이 보이는 지금 칸 크기 통일
+  drawMgBingoLines();
 }
 
 /** 중고등부 → 청년회 메인으로 복귀 */
@@ -1497,45 +1942,19 @@ function renderMgMyProof(mid) {
   }
 
   if (sub && sub.hasPhoto === true) {
-    var img = document.createElement("img");
-    img.alt = "내 인증샷";
-    box.appendChild(img);
-    if (typeof window.fbMgGetPhoto === "function" && APP_STATE.user) {
-      window.fbMgGetPhoto(team, mid, APP_STATE.user.uid)
-        .then(function (photo) {
-          if (!photo) return;
-          img.src = photo;
-          img.addEventListener("click", function () { openLightbox(photo); });
+    // 사진들은 mgPhotos에서 비동기 로드 → 도착 후 썸네일/추가 버튼 렌더
+    var thumbBox = document.createElement("div");
+    thumbBox.className = "mg-thumb-box";
+    box.appendChild(thumbBox);
+    if (typeof window.fbMgGetPhotos === "function" && APP_STATE.user) {
+      window.fbMgGetPhotos(team, mid, APP_STATE.user.uid)
+        .then(function (photos) {
+          // 그 사이 다른 미션/모드로 이동했으면 무시
+          if (!APP_STATE.mgMode || APP_STATE.currentMid !== mid) return;
+          renderMgMyThumbs(thumbBox, team, mid, photos);
         })
         .catch(function (err) { console.warn("내 인증샷 조회 실패:", err); });
     }
-
-    var btns = document.createElement("div");
-    btns.className = "my-proof-btns";
-
-    var reBtn = document.createElement("button");
-    reBtn.type = "button";
-    reBtn.className = "btn btn-primary btn-sm";
-    reBtn.textContent = "다시 올리기";
-    reBtn.addEventListener("click", pickPhoto);
-    btns.appendChild(reBtn);
-
-    var delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn btn-ghost btn-sm";
-    delBtn.textContent = "삭제";
-    delBtn.addEventListener("click", function () {
-      if (!confirm("인증사진을 삭제할까요? 다른 팀원의 인증이 없으면 칸 체크도 사라져요.")) return;
-      if (typeof window.fbMgDelete === "function") {
-        showLoading();
-        window.fbMgDelete(team, mid)
-          .then(function () { hideLoading(); showToast("삭제했어요."); })
-          .catch(function () { hideLoading(); showToast("삭제에 실패했어요. 다시 시도해 주세요."); });
-      }
-    });
-    btns.appendChild(delBtn);
-
-    box.appendChild(btns);
   } else if (sub && sub.test === true) {
     // 관리자 테스트 체크 상태 (사진 없음)
     var testInfo = document.createElement("p");
@@ -1551,6 +1970,7 @@ function renderMgMyProof(mid) {
       offBtn.addEventListener("click", function () { handleMgTestCheck(mid, false); });
       box.appendChild(offBtn);
     }
+    appendPhotoHint(box);
   } else {
     var upBtn = document.createElement("button");
     upBtn.type = "button";
@@ -1568,7 +1988,29 @@ function renderMgMyProof(mid) {
       onBtn.addEventListener("click", function () { handleMgTestCheck(mid, true); });
       box.appendChild(onBtn);
     }
+    appendPhotoHint(box);
   }
+}
+
+/** 중고등부 내 사진 썸네일 렌더 (mgPhotos 비동기 도착 후) — 장별 ✕ 삭제 + 추가 버튼 */
+function renderMgMyThumbs(container, team, mid, photos) {
+  container.innerHTML = "";
+  if (!photos || photos.length === 0) return;
+
+  container.appendChild(buildMyPhotoThumbs(photos, function (idx) {
+    if (!confirm("이 사진을 삭제할까요?" +
+      (photos.length === 1 ? " 다른 팀원의 인증이 없으면 칸 체크도 사라져요." : ""))) return;
+    if (typeof window.fbMgDeletePhoto !== "function") return;
+    showLoading();
+    window.fbMgDeletePhoto(team, mid, idx)
+      .then(function () {
+        hideLoading();
+        showToast("사진을 삭제했어요.");
+        renderMgMyProof(mid); // 메타 갱신을 기다리지 않고 즉시 다시 그림
+      })
+      .catch(function () { hideLoading(); showToast("삭제에 실패했어요. 다시 시도해 주세요."); });
+  }));
+  appendPhotoLimitUi(container, photos.length);
 }
 
 /** 중고등부 관리자 테스트 체크/해제 처리 */
@@ -1609,13 +2051,20 @@ window.renderMgGallery = function (mid, items) {
     var div = document.createElement("div");
     div.className = "gallery-item" + (revoked ? " revoked" : "");
 
-    if (item.photo) {
+    var ps = photosOf(item); // 대표 사진 = ps[0]
+    if (ps.length > 0) {
       var img = document.createElement("img");
-      img.src = item.photo;
+      img.src = ps[0];
       img.alt = item.nick + " 님의 인증샷";
       img.loading = "lazy";
-      img.addEventListener("click", function () { openLightbox(item.photo); });
+      img.addEventListener("click", function () { openGalleryLightbox(ps, 0); });
       div.appendChild(img);
+      if (ps.length > 1) {
+        var badge = document.createElement("span");
+        badge.className = "gi-count";
+        badge.textContent = "📷 x" + ps.length;
+        div.appendChild(badge);
+      }
     } else if (item.test) {
       // 관리자 테스트 체크 (사진 없음) → 플레이스홀더 타일
       var ph = document.createElement("div");
@@ -1746,14 +2195,93 @@ function scrollChatToBottom() {
    라이트박스 / 토스트 / 로딩
    ========================================================== */
 
+/** 사진 1장 크게 보기 — 스와이프 라이트박스에 위임 (기존 호출부 호환) */
 function openLightbox(src) {
+  openGalleryLightbox([src], 0);
+}
+
+/** 여러 장 스와이프 라이트박스 — ‹ › 버튼 / 좌우 스와이프 / 방향키로 넘겨보기 (처음·끝에서 멈춤) */
+function openGalleryLightbox(photos, startIndex) {
+  var list = (photos || []).filter(function (p) { return typeof p === "string" && p; });
+  if (list.length === 0) return;
+  var idx = 0;
+
   var box = document.createElement("div");
   box.className = "lightbox";
+
   var img = document.createElement("img");
-  img.src = src;
   img.alt = "인증샷 크게 보기";
   box.appendChild(img);
-  box.addEventListener("click", function () { box.remove(); });
+
+  var closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "lb-close";
+  closeBtn.setAttribute("aria-label", "닫기");
+  closeBtn.textContent = "✕";
+  box.appendChild(closeBtn);
+
+  // 2장 이상일 때만 이동 버튼/카운터 표시
+  var prevBtn = null, nextBtn = null, counter = null;
+  if (list.length > 1) {
+    prevBtn = document.createElement("button");
+    prevBtn.type = "button";
+    prevBtn.className = "lb-nav lb-prev";
+    prevBtn.setAttribute("aria-label", "이전 사진");
+    prevBtn.textContent = "‹";
+    box.appendChild(prevBtn);
+
+    nextBtn = document.createElement("button");
+    nextBtn.type = "button";
+    nextBtn.className = "lb-nav lb-next";
+    nextBtn.setAttribute("aria-label", "다음 사진");
+    nextBtn.textContent = "›";
+    box.appendChild(nextBtn);
+
+    counter = document.createElement("div");
+    counter.className = "lb-counter";
+    box.appendChild(counter);
+  }
+
+  function show(i) {
+    idx = Math.min(Math.max(i, 0), list.length - 1);
+    img.src = list[idx];
+    if (counter) counter.textContent = (idx + 1) + " / " + list.length;
+    if (prevBtn) prevBtn.disabled = idx === 0;
+    if (nextBtn) nextBtn.disabled = idx === list.length - 1;
+  }
+
+  function close() {
+    document.removeEventListener("keydown", onKey);
+    box.remove();
+  }
+
+  function onKey(e) {
+    if (e.key === "Escape") close();
+    else if (e.key === "ArrowLeft") show(idx - 1);
+    else if (e.key === "ArrowRight") show(idx + 1);
+  }
+
+  if (prevBtn) prevBtn.addEventListener("click", function (e) { e.stopPropagation(); show(idx - 1); });
+  if (nextBtn) nextBtn.addEventListener("click", function (e) { e.stopPropagation(); show(idx + 1); });
+  closeBtn.addEventListener("click", function (e) { e.stopPropagation(); close(); });
+  box.addEventListener("click", function (e) { if (e.target === box) close(); }); // 사진 바깥 클릭 시 닫기
+
+  // 터치 스와이프 (수평 이동 40px 이상)
+  var touchX = null;
+  box.addEventListener("touchstart", function (e) {
+    if (e.touches && e.touches.length === 1) touchX = e.touches[0].clientX;
+  }, { passive: true });
+  box.addEventListener("touchend", function (e) {
+    if (touchX === null) return;
+    var endX = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : touchX;
+    var dx = endX - touchX;
+    touchX = null;
+    if (Math.abs(dx) < 40) return;
+    show(dx < 0 ? idx + 1 : idx - 1);
+  });
+
+  document.addEventListener("keydown", onKey);
+  show(startIndex || 0);
   document.body.appendChild(box);
 }
 

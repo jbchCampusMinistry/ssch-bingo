@@ -264,7 +264,13 @@ body {
 /* 중앙(12번) 하트 칸 — 다른 칸처럼 흰 박스 + 안쪽에 핑크 하트 배경 (실제 미션, 프리칸 아님) */
 .cell.center { color: #d1215a; font-weight: 800; }   /* 흰 박스/그림자/라운드는 .cell 기본값 그대로 사용 */
 .cell.center .heart-bg {
-  position: absolute; inset: 10%; z-index: 1; opacity: 0.6;
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 60%;
+  aspect-ratio: 1;      /* 칸이 세로로 길어져도 하트는 정사각(하트 모양) 유지 → 박스 밖으로 안 넘침 */
+  height: auto;
+  z-index: 1; opacity: 0.6;
 }
 .cell.center .heart-bg path { fill: var(--pink-soft); transition: fill 0.25s; }
 .cell.center.done { background: linear-gradient(160deg, #ffe6f0 0%, #ffc9df 100%); color: #b3123a; }
@@ -435,6 +441,43 @@ body {
 .my-proof-btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .btn-sm { padding: 8px 16px; font-size: 0.83rem; border-radius: 10px; }
 
+/* 내 인증 — 사진 여러 장(최대 3장) 썸네일 줄 */
+.mp-thumbs {
+  display: flex; gap: 10px; justify-content: center;
+  padding: 4px 6px 0;
+  margin-bottom: 10px;
+}
+.mp-thumb { position: relative; width: 30%; max-width: 110px; }
+.my-proof .mp-thumb img {
+  width: 100%; max-width: none;
+  aspect-ratio: 1; object-fit: cover;
+  border-radius: 12px;
+  margin: 0;
+  display: block;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+  cursor: zoom-in;
+}
+/* 대표(첫 번째) 사진 배지 */
+.mp-rep-badge {
+  position: absolute; left: 4px; top: 4px; z-index: 2;
+  background: var(--yellow); color: var(--navy);
+  font-size: 0.6rem; font-weight: 900;
+  border-radius: 999px; padding: 1px 7px;
+  pointer-events: none;
+}
+/* 장별 ✕ 삭제 버튼 */
+.mp-del {
+  position: absolute; top: -7px; right: -7px; z-index: 3;
+  width: 22px; height: 22px;
+  border: 2px solid #fff; border-radius: 50%;
+  background: var(--red); color: #fff;
+  font-size: 0.68rem; font-weight: 900; line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.mp-hint { margin-top: 8px; font-size: 0.72rem; color: #7c8494; word-break: keep-all; line-height: 1.5; }
+.mp-max-note { font-size: 0.78rem; font-weight: 700; color: #7c8494; word-break: keep-all; }
+
 .admin-comment {
   color: var(--red);
   background: #fdecec;
@@ -462,10 +505,19 @@ body {
 }
 .gallery-empty { grid-column: 1 / -1; text-align: center; color: #999; font-size: 0.82rem; padding: 14px 0; word-break: keep-all; }
 .gallery-item {
+  position: relative;   /* 사진 여러 장 배지(gi-count) 기준점 */
   background: #f6f8fb;
   border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+/* 사진이 2장 이상일 때 우상단 장수 배지 */
+.gallery-item .gi-count {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  background: rgba(20,30,50,0.65); color: #fff;
+  font-size: 0.62rem; font-weight: 800;
+  border-radius: 999px; padding: 2px 7px;
+  pointer-events: none;
 }
 .gallery-item img {
   width: 100%; aspect-ratio: 1; object-fit: cover; display: block;
@@ -556,6 +608,65 @@ body {
   white-space: nowrap;
 }
 
+/* 관리자 패널 — 상단 탭 (회원 / 갤러리) */
+.admin-tabs { display: flex; gap: 6px; justify-content: center; margin-top: 12px; }
+.admin-tab {
+  border: none; border-radius: 999px;
+  background: #eef1f5; color: #555;
+  font-family: inherit; font-size: 0.8rem; font-weight: 800;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.admin-tab.active { background: var(--blue); color: #fff; }
+
+/* 관리자 갤러리 (행사 전체 사진 보기/다운로드) */
+.ag-toolbar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.ag-content {
+  margin-top: 14px;
+  max-height: 56vh;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.ag-mission { background: #f6f8fb; border-radius: 14px; padding: 12px; }
+.ag-mission-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-wrap: wrap;
+}
+.ag-mission-title {
+  color: var(--navy); font-size: 0.85rem; font-weight: 900;
+  word-break: keep-all; line-height: 1.4;
+}
+.ag-zip-btn { flex-shrink: 0; padding: 6px 12px; font-size: 0.75rem; }
+.ag-group-title { margin-top: 10px; font-size: 0.72rem; font-weight: 800; color: #7c8494; }
+.ag-grid {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.ag-item {
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.ag-item.revoked { opacity: 0.45; }
+.ag-item img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: zoom-in; }
+.ag-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px 6px; }
+.ag-nick {
+  font-size: 0.68rem; font-weight: 800; color: var(--navy);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ag-dl {
+  width: 24px; height: 24px; flex-shrink: 0;
+  border: none; border-radius: 8px;
+  background: var(--blue); color: #fff;
+  font-size: 0.75rem; line-height: 1;
+  cursor: pointer;
+}
+.ag-dl:hover { background: var(--blue-deep); }
+
 /* 회원 상세 — 미니 5×5 빙고판 */
 .au-back { margin-top: 10px; }
 .au-name { margin-top: 10px; text-align: center; font-weight: 900; color: var(--navy); font-size: 0.95rem; }
@@ -628,7 +739,7 @@ body {
   font-size: 0.78rem; font-weight: 800;
 }
 
-/* 사진 크게 보기 (라이트박스) */
+/* 사진 크게 보기 (라이트박스 — 여러 장이면 스와이프/버튼으로 넘겨보기) */
 .lightbox {
   position: fixed; inset: 0; z-index: 90;
   background: rgba(0,0,0,0.85);
@@ -636,7 +747,44 @@ body {
   padding: 20px;
   cursor: zoom-out;
 }
-.lightbox img { max-width: 100%; max-height: 90vh; border-radius: 10px; }
+.lightbox img { max-width: 100%; max-height: 90vh; border-radius: 10px; cursor: default; }
+
+/* 닫기 ✕ */
+.lb-close {
+  position: absolute; top: calc(14px + env(safe-area-inset-top, 0px)); right: 14px;
+  width: 38px; height: 38px;
+  border: none; border-radius: 50%;
+  background: rgba(255,255,255,0.18); color: #fff;
+  font-size: 1rem; font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lb-close:hover { background: rgba(255,255,255,0.3); }
+
+/* 이전/다음 ‹ › */
+.lb-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 64px;
+  border: none; border-radius: 14px;
+  background: rgba(255,255,255,0.16); color: #fff;
+  font-size: 2rem; font-weight: 700; line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.lb-nav:hover { background: rgba(255,255,255,0.28); }
+.lb-nav:disabled { opacity: 0.25; cursor: default; }
+.lb-prev { left: 8px; }
+.lb-next { right: 8px; }
+
+/* n / total 카운터 */
+.lb-counter {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  background: rgba(0,0,0,0.45); color: #fff;
+  font-size: 0.82rem; font-weight: 700;
+  border-radius: 999px; padding: 4px 14px;
+  pointer-events: none;
+}
 
 /* ---------- 토스트 ---------- */
 .toast {
@@ -944,7 +1092,7 @@ body {
 .btn-chat-send:hover { background: var(--blue-deep); }
 .btn-chat-send:active { transform: scale(0.96); }
 
-/* ---------- 다크모드 (중고등부 + 채팅) ---------- */
+/* ---------- 다크모드 (중고등부 + 채팅 + 사진 3장/관리자 갤러리) ---------- */
 @media (prefers-color-scheme: dark) {
   .btn-mg-enter { background: var(--blue); color: #fff; }
   .mg-team-indicator { background: rgba(30, 38, 52, 0.92); color: #9db8ee; }
@@ -955,4 +1103,18 @@ body {
   .chat-nick { color: #dbe6ff; }
   .chat-time { color: #7e8aa0; }
   .chat-input { background: #2b3342; border-color: #3d4757; color: #eee; }
+
+  /* 사진 3장 UI */
+  .mp-hint { color: #98a3b6; }
+  .mp-max-note { color: #98a3b6; }
+  .mp-del { border-color: #232a36; }
+
+  /* 관리자 갤러리 */
+  .admin-tab { background: #333c4b; color: #ddd; }
+  .admin-tab.active { background: var(--blue); color: #fff; }
+  .ag-mission { background: #2b3342; }
+  .ag-mission-title { color: #dbe6ff; }
+  .ag-group-title { color: #98a3b6; }
+  .ag-item { background: #232a36; }
+  .ag-nick { color: #dbe6ff; }
 }
