@@ -28,6 +28,13 @@ import {
   limitToLast,
   onChildAdded
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+import {
+  getStorage,
+  ref as sRef,
+  uploadBytes,
+  getBlob,
+  deleteObject
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
 /* ----------------------------------------------------------
    Firebase 설정
@@ -56,6 +63,7 @@ const configReady = !/^YOUR_/.test(firebaseConfig.apiKey || "YOUR_");
 let app = null;
 let auth = null;
 let db = null;
+let storage = null;          // Cloud Storage — 원본 사진 아카이브용 (없어도 앱은 정상 동작)
 
 /* ---------- 모듈 내부 상태 ---------- */
 let currentUser = null;      // firebase User
@@ -90,6 +98,14 @@ if (configReady) {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getDatabase(app);
+
+    // Cloud Storage 초기화 — 실패해도 storage=null로 두고 앱은 계속 (원본 아카이브만 비활성)
+    try {
+      storage = getStorage(app);
+    } catch (e) {
+      storage = null;
+      console.warn("Storage 초기화 실패(원본 아카이브 비활성):", e);
+    }
 
     // 리다이렉트 로그인 폴백 결과 처리 (팝업 차단 환경)
     getRedirectResult(auth).catch((err) => {
@@ -301,21 +317,149 @@ function unsubscribeMySubmissions() {
 }
 
 /* ==========================================================
-   window로 노출: 인증샷 업로드 / 삭제
+   사진 배열 정규화 — 예전 단일 사진 데이터와의 하위 호환
    ========================================================== */
 
-/** 인증샷 업로드 (재업로드 시 덮어쓰기 → 해제 기록도 초기화됨) */
-window.fbUploadSubmission = async function (mid, dataUrl) {
+/** 어떤 형태(문자열=예전 단일 사진 / 배열 / {0:..} 객체)든 dataURL 배열로 통일 */
+function toPhotoArray(val) {
+  if (!val) return [];
+  if (typeof val === "string") return [val];
+  const arr = Array.isArray(val)
+    ? val
+    : Object.keys(val).sort((a, b) => Number(a) - Number(b)).map((k) => val[k]);
+  return arr.filter((p) => typeof p === "string" && p.length > 0);
+}
+
+/** 제출 객체에서 사진 배열 추출 — photos 배열 우선, 없으면 예전 photo 단일값 */
+function photosOf(sub) {
+  if (!sub) return [];
+  const arr = toPhotoArray(sub.photos);
+  if (arr.length) return arr;
+  return sub.photo ? [sub.photo] : [];
+}
+
+/* ==========================================================
+   원본 사진 아카이브 (Cloud Storage) — best-effort 헬퍼
+   ※ 압축본은 지금처럼 RTDB에 저장(무료·빠른 표시)하고,
+     원본은 보존용으로 Storage에 "추가로" 올린다.
+     Storage가 실패해도(Blaze 미설정/오프라인/용량 초과 등)
+     압축본 저장은 반드시 계속돼야 함 — 게임이 멈추면 안 됨!
+   ========================================================== */
+
+/** 원본 파일 이름용 고유 ID */
+function newPhotoId() {
+  return Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+}
+
+/** origs 값(배열/객체/누락)을 photos와 같은 길이로 정규화 — 빈 값은 null
+    ※ 예전 데이터(origs 없음)는 전부 null로 채워 하위 호환 */
+function toOrigArray(val, len) {
+  let arr = [];
+  if (val) {
+    if (Array.isArray(val)) {
+      arr = val.slice();
+    } else if (typeof val === "object") {
+      Object.keys(val).forEach((k) => { arr[Number(k)] = val[k]; });
+    }
+  }
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    const p = arr[i];
+    out.push(typeof p === "string" && p.length > 0 ? p : null);
+  }
+  return out;
+}
+
+/** 저장용 변환 — null → ""(빈 문자열). RTDB는 배열 안의 null을 저장하지 않아
+    인덱스가 어긋나므로 빈 자리는 ""로 기록 (읽을 땐 toOrigArray가 null로 통일) */
+function origsForWrite(origs) {
+  return origs.map((p) => (typeof p === "string" && p ? p : ""));
+}
+
+/** 원본 업로드 (best-effort) — 성공 시 Storage 경로, 실패/불가 시 null */
+async function uploadOriginal(path, originalFile) {
+  if (!storage || !originalFile) return null;
+  try {
+    await uploadBytes(sRef(storage, path), originalFile, {
+      contentType: originalFile.type || "image/jpeg"
+    });
+    return path;
+  } catch (e) {
+    console.warn("원본 저장 실패(압축본만 저장):", e);
+    return null;
+  }
+}
+
+/** 원본 삭제 (best-effort) — 실패해도 무시 */
+async function deleteOriginal(path) {
+  if (!storage || typeof path !== "string" || !path) return;
+  try {
+    await deleteObject(sRef(storage, path));
+  } catch (e) {
+    console.warn("원본 삭제 실패:", path, e);
+  }
+}
+
+/* ==========================================================
+   window로 노출: 인증샷 업로드 / 삭제
+   ※ 한 칸에 최대 3장 — 첫 번째 사진이 대표 사진(photo 필드)
+   ========================================================== */
+
+/** 인증샷 업로드 — 기존 사진 뒤에 이어붙임 (3장 초과 시 MAX_PHOTOS, 재업로드 시 해제 기록 초기화)
+    원본 파일(originalFile)은 Cloud Storage에 보존용으로 추가 저장 (best-effort — 실패해도 압축본은 저장) */
+window.fbUploadSubmission = async function (mid, dataUrl, originalFile) {
   if (!currentUser) throw new Error("로그인이 필요해요.");
-  await set(ref(db, "submissions/" + mid + "/" + currentUser.uid), {
+  const r = ref(db, "submissions/" + mid + "/" + currentUser.uid);
+  const snap = await get(r);
+  const cur = snap.exists() ? snap.val() : null;
+  const photos = photosOf(cur);
+  if (photos.length >= 3) throw new Error("MAX_PHOTOS");
+  const origs = toOrigArray(cur ? cur.origs : null, photos.length); // photos와 같은 인덱스로 유지
+
+  // 원본 아카이브 (Storage) — 어떤 이유로 실패해도 아래 압축본 저장은 계속
+  const origPath = await uploadOriginal(
+    "originals/" + currentUser.uid + "/yc/" + mid + "/" + newPhotoId() + ".jpg",
+    originalFile
+  );
+
+  photos.push(dataUrl);
+  origs.push(origPath);
+  await set(r, {
     nick: currentNick,
-    photo: dataUrl,
+    photo: photos[0],  // 대표 사진 (보드/썸네일의 기존 sub.photo 코드 호환)
+    photos: photos,
+    origs: origsForWrite(origs), // 각 사진의 원본 Storage 경로 (없으면 "")
     ts: Date.now(),
     revoked: false
   });
 };
 
-/** 내 인증샷 삭제 */
+/** 내 인증샷 1장 삭제 — 남은 사진이 없으면 제출 노드 전체 삭제, 있으면 첫 장을 대표로 재지정
+    Storage에 원본이 있으면 함께 삭제 (best-effort) */
+window.fbDeletePhoto = async function (mid, index) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  const r = ref(db, "submissions/" + mid + "/" + currentUser.uid);
+  const snap = await get(r);
+  if (!snap.exists()) return;
+  const cur = snap.val() || {};
+  const photos = photosOf(cur);
+  const origs = toOrigArray(cur.origs, photos.length);
+  const removedOrig = origs[index] || null;
+  photos.splice(index, 1); // 해당 장만 빼고 배열 재구성 → 자동 재정렬
+  origs.splice(index, 1);  // 원본 경로도 같은 인덱스로 정렬 유지
+  if (photos.length === 0) {
+    await remove(r);
+  } else {
+    await set(r, Object.assign({}, cur, {
+      photo: photos[0],
+      photos: photos,
+      origs: origsForWrite(origs)
+    }));
+  }
+  await deleteOriginal(removedOrig); // 원본도 정리 (실패해도 무시)
+};
+
+/** 내 인증샷 전체 삭제 (칸 통째로 — 예전 호환용) */
 window.fbDeleteSubmission = async function (mid) {
   if (!currentUser) throw new Error("로그인이 필요해요.");
   await remove(ref(db, "submissions/" + mid + "/" + currentUser.uid));
@@ -334,10 +478,12 @@ window.fbWatchGallery = function (mid) {
       const val = snap.val();
       Object.keys(val).forEach((uid) => {
         const s = val[uid] || {};
+        const ps = photosOf(s); // 예전 단일 photo 데이터도 배열로 통일
         items.push({
           uid: uid,
           nick: s.nick || "",
-          photo: s.photo || "",
+          photo: ps[0] || "",
+          photos: ps,
           ts: s.ts || 0,
           test: s.test === true,
           revoked: s.revoked === true,
@@ -479,6 +625,92 @@ window.fbGetUserSubs = async function (uid) {
 };
 
 /* ==========================================================
+   window로 노출: 관리자 갤러리 — 행사 전체 사진 일괄 조회
+   ※ 읽기 비용이 커서 관리자 패널의 [사진 불러오기] 버튼에서만 호출
+   ========================================================== */
+window.fbAdminLoadAllPhotos = async function () {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  const [subSnap, metaA, metaB, phA, phB, ogA, ogB] = await Promise.all([
+    get(ref(db, "submissions")),
+    get(ref(db, "mgSubmissions/A")),
+    get(ref(db, "mgSubmissions/B")),
+    get(ref(db, "mgPhotos/A")),
+    get(ref(db, "mgPhotos/B")),
+    get(ref(db, "mgOrigs/A")).catch(() => null), // 규칙 미배포 등으로 못 읽어도 갤러리는 동작
+    get(ref(db, "mgOrigs/B")).catch(() => null)
+  ]);
+  const subs = subSnap.exists() ? subSnap.val() : {};
+  const mgMeta = { A: metaA.exists() ? metaA.val() : {}, B: metaB.exists() ? metaB.val() : {} };
+  const mgPh = { A: phA.exists() ? phA.val() : {}, B: phB.exists() ? phB.val() : {} };
+  const mgOg = {
+    A: ogA && ogA.exists() ? ogA.val() : {},
+    B: ogB && ogB.exists() ? ogB.val() : {}
+  };
+
+  const missions = [];
+  for (let mid = 0; mid < 25; mid++) {
+    const groups = [];
+
+    // 청년회 — 사진이 1장 이상인 제출만 (테스트 체크 제외, 해제된 건 표시용으로 포함)
+    // origs = 각 사진의 원본 Storage 경로 배열 (photos와 같은 인덱스, 원본 없으면 null)
+    const yEntries = [];
+    const ySubs = subs[mid] || {};
+    Object.keys(ySubs).forEach((uid) => {
+      const s = ySubs[uid] || {};
+      const photos = photosOf(s);
+      if (photos.length === 0) return;
+      yEntries.push({
+        uid: uid,
+        nick: s.nick || "",
+        photos: photos,
+        origs: toOrigArray(s.origs, photos.length),
+        revoked: s.revoked === true
+      });
+    });
+    groups.push({ source: "청년회", entries: yEntries });
+
+    // 중고등부 A/B팀
+    ["A", "B"].forEach((team) => {
+      const entries = [];
+      const metas = (mgMeta[team] && mgMeta[team][mid]) || {};
+      const photosNode = (mgPh[team] && mgPh[team][mid]) || {};
+      const origsNode = (mgOg[team] && mgOg[team][mid]) || {};
+      Object.keys(metas).forEach((uid) => {
+        const m = metas[uid] || {};
+        const photos = toPhotoArray(photosNode[uid]);
+        if (photos.length === 0) return;
+        entries.push({
+          uid: uid,
+          nick: m.nick || "",
+          photos: photos,
+          origs: toOrigArray(origsNode[uid], photos.length),
+          revoked: m.revoked === true
+        });
+      });
+      groups.push({ source: "중고등부 " + team + "팀", entries: entries });
+    });
+
+    missions.push({
+      mid: mid,
+      title: (window.MISSIONS && window.MISSIONS[mid]) || "",
+      groups: groups
+    });
+  }
+  return { missions: missions };
+};
+
+/** 원본 사진 Blob 다운로드 (관리자 원본 ZIP용) — 실패/미설정 시 null (best-effort) */
+window.fbFetchOriginalBlob = async function (path) {
+  if (!storage) return null;
+  try {
+    return await getBlob(sRef(storage, path));
+  } catch (e) {
+    console.warn("원본 다운로드 실패:", path, e);
+    return null;
+  }
+};
+
+/* ==========================================================
    window로 노출: 관리자 테스트 체크 (사진 없이 내 칸 체크/해제)
    ========================================================== */
 window.fbTestCheck = async function (mid, on) {
@@ -591,6 +823,7 @@ window.fbMgWatchGallery = function (team, mid) {
           uid: uid,
           nick: s.nick || "",
           photo: "",
+          photos: [],
           ts: s.ts || 0,
           test: s.test === true,
           revoked: s.revoked === true,
@@ -600,7 +833,11 @@ window.fbMgWatchGallery = function (team, mid) {
         if (s.hasPhoto === true) {
           photoGets.push(
             get(ref(db, "mgPhotos/" + team + "/" + mid + "/" + uid))
-              .then((ps) => { if (ps.exists()) item.photo = ps.val(); })
+              .then((ps) => {
+                if (!ps.exists()) return;
+                item.photos = toPhotoArray(ps.val()); // 예전 단일 문자열도 배열로 통일
+                item.photo = item.photos[0] || "";
+              })
               .catch(() => { /* 사진 못 읽어도 목록은 표시 */ })
           );
         }
@@ -619,29 +856,95 @@ window.fbMgUnwatchGallery = function () {
   mgGalleryKey = null;
 };
 
-/** 사진 1장 조회 (미션 모달의 "내 인증" 표시용) */
-window.fbMgGetPhoto = async function (team, mid, uid) {
+/** 사진 배열 조회 (미션 모달의 "내 인증" 표시용 — 예전 단일 문자열 데이터도 배열로 통일) */
+window.fbMgGetPhotos = async function (team, mid, uid) {
   const snap = await get(ref(db, "mgPhotos/" + team + "/" + mid + "/" + uid));
-  return snap.exists() ? snap.val() : "";
+  return snap.exists() ? toPhotoArray(snap.val()) : [];
+};
+
+/** 사진 1장(대표) 조회 — 예전 호환용 */
+window.fbMgGetPhoto = async function (team, mid, uid) {
+  const photos = await window.fbMgGetPhotos(team, mid, uid);
+  return photos[0] || "";
 };
 
 /* ==========================================================
    중고등부 — 업로드 / 삭제 / 테스트 체크 / 체크 해제
+   ※ 한 칸에 최대 3장 — mgPhotos/$team/$mid/$uid 는 사진 배열
    ========================================================== */
 
-/** 인증샷 업로드 — 사진(mgPhotos) 먼저, 메타(mgSubmissions)는 나중에 (사진 없는 완료 순간 방지) */
-window.fbMgUpload = async function (team, mid, dataUrl) {
+/** 인증샷 업로드 — 사진(mgPhotos) 먼저, 메타(mgSubmissions)는 나중에 (사진 없는 완료 순간 방지)
+    기존 사진 뒤에 이어붙임 (3장 초과 시 MAX_PHOTOS)
+    원본 파일(originalFile)은 Storage에 보존용으로 추가 저장, 경로는 mgOrigs에 기록 (모두 best-effort) */
+window.fbMgUpload = async function (team, mid, dataUrl, originalFile) {
   if (!currentUser) throw new Error("로그인이 필요해요.");
-  await set(ref(db, "mgPhotos/" + team + "/" + mid + "/" + currentUser.uid), dataUrl);
+  const pr = ref(db, "mgPhotos/" + team + "/" + mid + "/" + currentUser.uid);
+  const or = ref(db, "mgOrigs/" + team + "/" + mid + "/" + currentUser.uid);
+  const snap = await get(pr);
+  const photos = snap.exists() ? toPhotoArray(snap.val()) : [];
+  if (photos.length >= 3) throw new Error("MAX_PHOTOS");
+
+  // 기존 원본 경로 읽기 — 실패해도 업로드는 계속 (photos와 같은 인덱스로 유지)
+  let origs = toOrigArray(null, photos.length);
+  try {
+    const oSnap = await get(or);
+    if (oSnap.exists()) origs = toOrigArray(oSnap.val(), photos.length);
+  } catch (e) { /* 원본 경로 못 읽어도 무시 */ }
+
+  // 원본 아카이브 (Storage) — 어떤 이유로 실패해도 아래 압축본 저장은 계속
+  const origPath = await uploadOriginal(
+    "originals/" + currentUser.uid + "/mg/" + team + "/" + mid + "/" + newPhotoId() + ".jpg",
+    originalFile
+  );
+
+  photos.push(dataUrl);
+  origs.push(origPath);
+  await set(pr, photos);
+  try {
+    await set(or, origsForWrite(origs)); // 원본 경로 기록 실패해도 게임 진행에는 영향 없음
+  } catch (e) { console.warn("원본 경로 기록 실패:", e); }
   await set(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid), {
     nick: currentNick,
     hasPhoto: true,
+    photoCount: photos.length,
     ts: Date.now(),
     revoked: false
   });
 };
 
-/** 내 인증샷 삭제 — 메타 먼저 지워 완료 상태부터 해제 */
+/** 내 인증샷 1장 삭제 — 남은 사진이 없으면 메타 먼저 지워 완료 상태부터 해제
+    Storage에 원본이 있으면 함께 삭제 (best-effort) */
+window.fbMgDeletePhoto = async function (team, mid, index) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  const pr = ref(db, "mgPhotos/" + team + "/" + mid + "/" + currentUser.uid);
+  const or = ref(db, "mgOrigs/" + team + "/" + mid + "/" + currentUser.uid);
+  const mr = ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid);
+  const snap = await get(pr);
+  const photos = snap.exists() ? toPhotoArray(snap.val()) : [];
+
+  // 원본 경로도 같은 인덱스로 정렬 유지 (못 읽어도 삭제는 계속)
+  let origs = toOrigArray(null, photos.length);
+  try {
+    const oSnap = await get(or);
+    if (oSnap.exists()) origs = toOrigArray(oSnap.val(), photos.length);
+  } catch (e) { /* 무시 */ }
+
+  const removedOrig = origs[index] || null;
+  photos.splice(index, 1); // 해당 장만 빼고 배열 재구성 → 자동 재정렬
+  origs.splice(index, 1);
+  if (photos.length === 0) {
+    await remove(mr);
+    await remove(pr);
+    try { await remove(or); } catch (e) { /* 무시 */ }
+  } else {
+    await set(pr, photos);
+    try { await set(or, origsForWrite(origs)); } catch (e) { /* 무시 */ }
+    await update(mr, { photoCount: photos.length });
+  }
+  await deleteOriginal(removedOrig); // 원본도 정리 (실패해도 무시)
+};
+
+/** 내 인증샷 전체 삭제 (칸 통째로 — 예전 호환용, 메타 먼저 지워 완료 상태부터 해제) */
 window.fbMgDelete = async function (team, mid) {
   if (!currentUser) throw new Error("로그인이 필요해요.");
   await remove(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid));
