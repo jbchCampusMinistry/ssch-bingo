@@ -36,20 +36,15 @@ self.addEventListener("push", function (event) {
     body = n.body || d.body || payload.body || "";
   } catch (e) { /* 파싱 실패 시 기본 문구로 표시 */ }
 
-  var _title = title, _body = body;
+  // 포그라운드/백그라운드 상관없이 "항상" 알림 표시 → 브라우저 기본 문구가 절대 안 뜸
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (cs) {
-      // 앱이 화면에 열려 있으면(포그라운드) 인앱 배너가 처리 → 시스템 알림 생략(중복 방지)
-      var focused = cs.some(function (c) { return c.focused === true; });
-      if (focused) return;
-      return self.registration.showNotification(_title, {
-        body: _body,
-        icon: "./icon.svg",
-        badge: "./icon.svg",
-        tag: "ssch-announcement",
-        renotify: true,
-        data: { url: "./" }
-      });
+    self.registration.showNotification(title, {
+      body: body,
+      icon: "./icon.svg",
+      badge: "./icon.svg",
+      tag: "ssch-announcement",
+      renotify: true,
+      data: { url: "./" }
     })
   );
 });
@@ -63,7 +58,7 @@ self.addEventListener("notificationclick", function (e) {
   }));
 });
 
-const CACHE_NAME = "haggye-bingo-shell-v3"; // raw push 핸들러로 교체 → 새 SW 활성화
+const CACHE_NAME = "haggye-bingo-shell-v4"; // 알림 항상 표시로 수정 → 새 SW 활성화
 
 /* 미리 캐시할 앱 셸 */
 const SHELL_ASSETS = [
