@@ -2450,14 +2450,25 @@ function handleSendAnnouncement() {
 /* ---------- 공지 게시판 (메인 상단 — 모든 참가자에게 표시) ---------- */
 
 /** 공지 목록 렌더 — firebase.js의 fbWatchAnnouncements가 최신순 배열로 호출 */
+var ANN_PER_PAGE = 3; // 공지 게시판 한 페이지에 보여줄 개수
+
 window.renderAnnouncements = function (list) {
+  APP_STATE.announcements = list || [];
+  // 목록이 갱신되면 페이지 범위 보정 (마지막 페이지 밖이면 클램프)
+  var totalPages = Math.max(1, Math.ceil(APP_STATE.announcements.length / ANN_PER_PAGE));
+  if (typeof APP_STATE.announcePage !== "number" || APP_STATE.announcePage < 0) APP_STATE.announcePage = 0;
+  if (APP_STATE.announcePage > totalPages - 1) APP_STATE.announcePage = totalPages - 1;
+  renderAnnouncePage();
+};
+
+/** 현재 페이지(3개씩)만 렌더 + 이전/다음 네비게이션 */
+function renderAnnouncePage() {
   var board = document.getElementById("announceBoard");
   if (!board) return;
-  board.innerHTML = ""; // 목록은 아래에서 textContent로만 채움 (서버 문자열 이스케이프)
-  if (!list || list.length === 0) {
-    board.classList.add("hidden");
-    return;
-  }
+  board.innerHTML = ""; // 서버 문자열은 아래에서 textContent로만 채움 (이스케이프)
+
+  var list = APP_STATE.announcements || [];
+  if (list.length === 0) { board.classList.add("hidden"); return; }
   board.classList.remove("hidden");
 
   var heading = document.createElement("h2");
@@ -2465,48 +2476,87 @@ window.renderAnnouncements = function (list) {
   heading.textContent = "📢 공지사항";
   board.appendChild(heading);
 
-  list.forEach(function (ann) {
-    var card = document.createElement("article");
-    card.className = "announce-card";
+  var totalPages = Math.ceil(list.length / ANN_PER_PAGE);
+  var page = Math.min(Math.max(APP_STATE.announcePage || 0, 0), totalPages - 1);
+  APP_STATE.announcePage = page;
 
-    var head = document.createElement("div");
-    head.className = "announce-card-head";
-
-    var titleEl = document.createElement("p");
-    titleEl.className = "announce-title";
-    titleEl.textContent = ann.title || "📢 공지"; // textContent → HTML 자동 이스케이프
-    head.appendChild(titleEl);
-
-    // 관리자만 삭제(🗑) 버튼 표시
-    if (APP_STATE.isAdmin) {
-      var delBtn = document.createElement("button");
-      delBtn.type = "button";
-      delBtn.className = "announce-del";
-      delBtn.setAttribute("aria-label", "공지 삭제");
-      delBtn.textContent = "🗑";
-      delBtn.onclick = (function (id) {
-        return function () { handleDeleteAnnouncement(id); };
-      })(ann.id);
-      head.appendChild(delBtn);
-    }
-    card.appendChild(head);
-
-    var bodyEl = document.createElement("p");
-    bodyEl.className = "announce-body";
-    bodyEl.textContent = ann.body || ""; // 줄바꿈은 CSS white-space: pre-wrap 으로 유지
-    card.appendChild(bodyEl);
-
-    var metaEl = document.createElement("p");
-    metaEl.className = "announce-meta";
-    metaEl.textContent =
-      "대상: " + (ANN_TARGET_LABELS[ann.target] || ann.target) +
-      (ann.by ? " · " + ann.by : "") +
-      " · " + formatAnnounceTime(ann.ts);
-    card.appendChild(metaEl);
-
-    board.appendChild(card);
+  var start = page * ANN_PER_PAGE;
+  list.slice(start, start + ANN_PER_PAGE).forEach(function (ann) {
+    board.appendChild(buildAnnounceCard(ann));
   });
-};
+
+  // 페이지가 2개 이상일 때만 이전/다음 버튼 노출
+  if (totalPages > 1) {
+    var nav = document.createElement("div");
+    nav.className = "announce-nav";
+
+    var prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "announce-nav-btn";
+    prev.textContent = "‹ 이전";
+    prev.disabled = page === 0;
+    prev.onclick = function () { APP_STATE.announcePage = page - 1; renderAnnouncePage(); };
+    nav.appendChild(prev);
+
+    var ind = document.createElement("span");
+    ind.className = "announce-nav-page";
+    ind.textContent = (page + 1) + " / " + totalPages;
+    nav.appendChild(ind);
+
+    var next = document.createElement("button");
+    next.type = "button";
+    next.className = "announce-nav-btn";
+    next.textContent = "다음 ›";
+    next.disabled = page === totalPages - 1;
+    next.onclick = function () { APP_STATE.announcePage = page + 1; renderAnnouncePage(); };
+    nav.appendChild(next);
+
+    board.appendChild(nav);
+  }
+}
+
+/** 공지 카드 1개 생성 (제목/본문/메타 + 관리자 삭제 버튼) */
+function buildAnnounceCard(ann) {
+  var card = document.createElement("article");
+  card.className = "announce-card";
+
+  var head = document.createElement("div");
+  head.className = "announce-card-head";
+
+  var titleEl = document.createElement("p");
+  titleEl.className = "announce-title";
+  titleEl.textContent = ann.title || "📢 공지"; // textContent → HTML 자동 이스케이프
+  head.appendChild(titleEl);
+
+  // 관리자만 삭제(🗑) 버튼 표시
+  if (APP_STATE.isAdmin) {
+    var delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "announce-del";
+    delBtn.setAttribute("aria-label", "공지 삭제");
+    delBtn.textContent = "🗑";
+    delBtn.onclick = (function (id) {
+      return function () { handleDeleteAnnouncement(id); };
+    })(ann.id);
+    head.appendChild(delBtn);
+  }
+  card.appendChild(head);
+
+  var bodyEl = document.createElement("p");
+  bodyEl.className = "announce-body";
+  bodyEl.textContent = ann.body || ""; // 줄바꿈은 CSS white-space: pre-wrap 으로 유지
+  card.appendChild(bodyEl);
+
+  var metaEl = document.createElement("p");
+  metaEl.className = "announce-meta";
+  metaEl.textContent =
+    "대상: " + (ANN_TARGET_LABELS[ann.target] || ann.target) +
+    (ann.by ? " · " + ann.by : "") +
+    " · " + formatAnnounceTime(ann.ts);
+  card.appendChild(metaEl);
+
+  return card;
+}
 
 /** 공지 시간 표기 — "M월 D일 HH:MM" (시:분은 채팅 시간 헬퍼 재사용) */
 function formatAnnounceTime(ts) {

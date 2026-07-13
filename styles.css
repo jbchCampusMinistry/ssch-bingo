@@ -1289,6 +1289,26 @@ body {
 .announce-del:hover { background: rgba(229, 72, 77, 0.25); }
 .announce-del:active { transform: scale(0.92); }
 
+/* 공지 페이지 네비게이션 (이전/다음) */
+.announce-nav {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin-top: 10px;
+}
+.announce-nav-btn {
+  background: var(--blue); color: #fff;
+  border: none; border-radius: 999px;
+  font-family: inherit; font-size: 0.82rem; font-weight: 800;
+  padding: 6px 16px; cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.announce-nav-btn:hover:not(:disabled) { background: var(--blue-deep); }
+.announce-nav-btn:active:not(:disabled) { transform: scale(0.96); }
+.announce-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.announce-nav-page {
+  font-size: 0.82rem; font-weight: 800; color: var(--navy);
+  min-width: 44px; text-align: center;
+}
+
 /* ---------- 다크모드 (공지 게시판) ---------- */
 @media (prefers-color-scheme: dark) {
   .announce-board { background: rgba(30, 38, 52, 0.92); }
@@ -1298,4 +1318,5 @@ body {
   .announce-body { color: #cfd6e2; }
   .announce-meta { color: #8f9bb0; }
   .announce-del { background: rgba(229, 72, 77, 0.22); }
+  .announce-nav-page { color: #dbe6ff; }
 }
