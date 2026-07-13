@@ -1229,3 +1229,73 @@ body {
   .ann-target-opt span { background: #333c4b; color: #ddd; }
   .ann-target-opt input:checked + span { background: var(--blue); color: #fff; }
 }
+
+/* ==========================================================
+   공지 게시판 (메인 상단 — 성경 구절 위, 모든 참가자에게 표시)
+   ========================================================== */
+.announce-board {
+  background: rgba(255, 255, 255, 0.94);
+  border-left: 5px solid var(--yellow);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+.announce-heading {
+  font-size: 0.95rem; font-weight: 900;
+  color: var(--blue-deep);
+  margin-bottom: 10px;
+}
+
+/* 공지 카드 1건 */
+.announce-card {
+  background: #f5f8fd;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.announce-card + .announce-card { margin-top: 8px; }
+.announce-card-head { display: flex; align-items: flex-start; gap: 8px; }
+.announce-title {
+  flex: 1; min-width: 0;
+  font-size: 0.88rem; font-weight: 800;
+  color: var(--navy);
+  word-break: keep-all;
+}
+.announce-body {
+  margin-top: 4px;
+  font-size: 0.84rem; font-weight: 500; line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap; /* 공지 줄바꿈 유지 */
+  word-break: keep-all;
+}
+.announce-meta {
+  margin-top: 6px;
+  font-size: 0.72rem; font-weight: 600;
+  color: #7a879c;
+}
+
+/* 공지 삭제(🗑) 버튼 — 관리자에게만 렌더됨 */
+.announce-del {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  border: none; border-radius: 8px;
+  background: rgba(229, 72, 77, 0.12);
+  font-size: 0.82rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.announce-del:hover { background: rgba(229, 72, 77, 0.25); }
+.announce-del:active { transform: scale(0.92); }
+
+/* ---------- 다크모드 (공지 게시판) ---------- */
+@media (prefers-color-scheme: dark) {
+  .announce-board { background: rgba(30, 38, 52, 0.92); }
+  .announce-heading { color: var(--yellow); }
+  .announce-card { background: #2b3342; }
+  .announce-title { color: #dbe6ff; }
+  .announce-body { color: #cfd6e2; }
+  .announce-meta { color: #8f9bb0; }
+  .announce-del { background: rgba(229, 72, 77, 0.22); }
+}

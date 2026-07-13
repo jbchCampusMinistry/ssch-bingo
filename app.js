@@ -339,6 +339,7 @@ window.showLogin = function () {
   closeAnnounceModal();
   dismissAnnounceBanner();
   window.clearChat();
+  window.renderAnnouncements([]); // 공지 게시판 초기화 (비우고 숨김)
   var notifBtn = document.getElementById("btnEnableNotif");
   if (notifBtn) notifBtn.classList.add("hidden"); // 알림 UI 상태 초기화
   document.getElementById("nickModal").classList.add("hidden");
@@ -961,7 +962,7 @@ function handleConfirmRevoke() {
   // 중고등부 인증 해제는 팀 경로(fbMgRevoke)로 분기
   var revokeFn = target.mgTeam
     ? function () { return window.fbMgRevoke(target.mgTeam, target.mid, target.uid, comment); }
-    : function () { return window.fbRevoke(target.mid, target.uid, comment); };
+    : function () { return window.fbRevoke(target.mid, target.uid, comment, MISSIONS[target.mid]); }; // 미션 제목 → 당사자 해제 알림에 사용
   if (typeof (target.mgTeam ? window.fbMgRevoke : window.fbRevoke) !== "function") return;
   showLoading();
   revokeFn()
@@ -2443,6 +2444,91 @@ function handleSendAnnouncement() {
       console.warn("공지 보내기 실패:", err);
       errEl.textContent = (err && err.message) || "공지를 보내지 못했어요. 다시 시도해 주세요.";
       errEl.classList.remove("hidden");
+    });
+}
+
+/* ---------- 공지 게시판 (메인 상단 — 모든 참가자에게 표시) ---------- */
+
+/** 공지 목록 렌더 — firebase.js의 fbWatchAnnouncements가 최신순 배열로 호출 */
+window.renderAnnouncements = function (list) {
+  var board = document.getElementById("announceBoard");
+  if (!board) return;
+  board.innerHTML = ""; // 목록은 아래에서 textContent로만 채움 (서버 문자열 이스케이프)
+  if (!list || list.length === 0) {
+    board.classList.add("hidden");
+    return;
+  }
+  board.classList.remove("hidden");
+
+  var heading = document.createElement("h2");
+  heading.className = "announce-heading";
+  heading.textContent = "📢 공지사항";
+  board.appendChild(heading);
+
+  list.forEach(function (ann) {
+    var card = document.createElement("article");
+    card.className = "announce-card";
+
+    var head = document.createElement("div");
+    head.className = "announce-card-head";
+
+    var titleEl = document.createElement("p");
+    titleEl.className = "announce-title";
+    titleEl.textContent = ann.title || "📢 공지"; // textContent → HTML 자동 이스케이프
+    head.appendChild(titleEl);
+
+    // 관리자만 삭제(🗑) 버튼 표시
+    if (APP_STATE.isAdmin) {
+      var delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "announce-del";
+      delBtn.setAttribute("aria-label", "공지 삭제");
+      delBtn.textContent = "🗑";
+      delBtn.onclick = (function (id) {
+        return function () { handleDeleteAnnouncement(id); };
+      })(ann.id);
+      head.appendChild(delBtn);
+    }
+    card.appendChild(head);
+
+    var bodyEl = document.createElement("p");
+    bodyEl.className = "announce-body";
+    bodyEl.textContent = ann.body || ""; // 줄바꿈은 CSS white-space: pre-wrap 으로 유지
+    card.appendChild(bodyEl);
+
+    var metaEl = document.createElement("p");
+    metaEl.className = "announce-meta";
+    metaEl.textContent =
+      "대상: " + (ANN_TARGET_LABELS[ann.target] || ann.target) +
+      (ann.by ? " · " + ann.by : "") +
+      " · " + formatAnnounceTime(ann.ts);
+    card.appendChild(metaEl);
+
+    board.appendChild(card);
+  });
+};
+
+/** 공지 시간 표기 — "M월 D일 HH:MM" (시:분은 채팅 시간 헬퍼 재사용) */
+function formatAnnounceTime(ts) {
+  var d = new Date(ts || Date.now());
+  return (d.getMonth() + 1) + "월 " + d.getDate() + "일 " + formatChatTime(ts);
+}
+
+/** 공지 삭제 (관리자 — 게시판 카드의 🗑 버튼) */
+function handleDeleteAnnouncement(id) {
+  if (!APP_STATE.isAdmin || !id) return;
+  if (typeof window.fbDeleteAnnouncement !== "function") return;
+  if (!confirm("이 공지를 삭제할까요?")) return;
+  showLoading();
+  window.fbDeleteAnnouncement(id)
+    .then(function () {
+      hideLoading();
+      showToast("공지를 삭제했어요."); // 목록은 실시간 구독이 자동 갱신
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("공지 삭제 실패:", err);
+      showToast("삭제에 실패했어요.");
     });
 }
 
