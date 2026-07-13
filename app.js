@@ -61,6 +61,7 @@ var APP_STATE = {
   revokeTarget: null,  // { mid, uid, nick, mgTeam? } 체크 해제 대상
   adminDetail: null,   // { uid, nick } 관리자 패널에서 보고 있는 회원
   adminGallery: null,  // { missions: [...] } 관리자 갤러리 데이터 (사진 불러오기 후)
+  missionCounts: {},   // { mid: 완료 인원수 } — firebase.js의 missionDone 인덱스 집계
   uploading: false,
 
   /* ---------- 중고등부(팀 빙고) ---------- */
@@ -155,6 +156,10 @@ function buildBoard() {
     dot.className = "revoke-dot";
     cell.appendChild(dot);
 
+    var count = document.createElement("span");
+    count.className = "cell-count"; // 미션별 완료 인원수 배지 (칸 하단)
+    cell.appendChild(count);
+
     cell.addEventListener("click", (function (mid) {
       return function () { openMissionModal(mid); };
     })(i));
@@ -211,6 +216,25 @@ function refreshBoard() {
   // 내 순위 데이터(leaderboard) 갱신 요청 → firebase.js
   if (APP_STATE.user && APP_STATE.nick && typeof window.fbUpdateLeaderboard === "function") {
     window.fbUpdateLeaderboard(checks, bingos);
+  }
+
+  renderMissionCounts(); // 보드 재구성 후에도 완료 인원수 배지 다시 반영
+}
+
+/** 미션별 완료 인원수를 각 칸 하단 배지에 표시 (0명이면 숨김 — 칸이 없으면 no-op) */
+function renderMissionCounts() {
+  var i;
+  for (i = 0; i < 25; i++) {
+    var el = document.querySelector('#board .cell[data-mid="' + i + '"] .cell-count');
+    if (!el) continue;
+    var n = APP_STATE.missionCounts[i] || 0;
+    if (n > 0) {
+      el.textContent = n + "명";
+      el.classList.add("has");
+    } else {
+      el.textContent = "";
+      el.classList.remove("has");
+    }
   }
 }
 
@@ -297,6 +321,7 @@ window.showLogin = function () {
   APP_STATE.isAdmin = false;
   APP_STATE.mySubs = {};
   APP_STATE.gallery = {};
+  APP_STATE.missionCounts = {};
   APP_STATE.mgMode = false;
   APP_STATE.mgTeam = null;
   APP_STATE.mgViewTeam = null;
@@ -382,6 +407,12 @@ window.onMySubmissions = function (subsMap) {
   refreshBoard();
   // 미션 상세 모달이 열려 있으면 내 인증 영역도 다시 그림 (중고등부 모드는 onMgData가 담당)
   if (APP_STATE.currentMid !== null && !APP_STATE.mgMode) renderMyProof(APP_STATE.currentMid);
+};
+
+/** 미션별 완료 인원수 갱신 — firebase.js가 missionDone 인덱스를 집계해 호출 */
+window.onMissionCounts = function (counts) {
+  APP_STATE.missionCounts = counts || {};
+  renderMissionCounts();
 };
 
 /** 특정 미션의 갤러리 갱신 */

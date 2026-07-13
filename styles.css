@@ -289,6 +289,24 @@ body {
 }
 .cell.revoked .revoke-dot { display: block; }
 
+/* ---------- 미션별 완료 인원수 배지 — 칸 하단 중앙 (우상단 체크/해제 점과 안 겹침) ---------- */
+#board .cell { padding-bottom: 14px; }  /* 배지 자리 확보 — 배지는 absolute라 라벨 배치는 그대로 (청년회 보드에만 표시) */
+.cell .cell-count {
+  display: none;
+  position: absolute; bottom: 3px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(28, 58, 110, 0.72);  /* 반투명 남색 — 흰 칸/연두 완료 칸(다크 모드 포함) 모두에서 또렷 */
+  color: #fff;
+  font-size: 0.6rem; font-weight: 700; line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;                 /* 칸 클릭을 가로막지 않음 */
+}
+.cell .cell-count.has { display: inline-block; }
+.cell.center .cell-count { background: rgba(209, 33, 90, 0.72); }  /* 하트 칸은 핑크 톤으로 어울리게 */
+
 /* ---------- 빙고 줄 오버레이(빨간 선) ---------- */
 .line-overlay {
   position: absolute; inset: 0;

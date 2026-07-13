@@ -85,6 +85,8 @@ let usersUnsub = null;       // 관리자 패널 회원 목록 리스너 해제 
 let lastLBKey = null;        // 마지막으로 기록한 "checks:bingos" (불필요한 재기록 방지)
 let lbReady = false;         // 내 기존 leaderboard 값을 읽었는지
 let emitTimer = null;        // 제출 갱신 디바운스
+let missionDoneUnsub = null; // 미션별 완료 인원 인덱스(missionDone) 리스너 해제 함수
+let myDoneCache = null;      // { mid: true } 내 완료 플래그 마지막 동기화 상태 (null = 이번 세션 아직 동기화 전)
 
 /* ---------- 중고등부(팀 빙고) 상태 ---------- */
 let currentMgRole = false;            // 내 중고등부 권한 (mgRoles/$uid)
@@ -225,6 +227,7 @@ async function enterMain() {
   window.showMain({ uid: currentUser.uid, email: currentUser.email }, currentNick, currentIsAdmin);
   subscribeMySubmissions();
   subscribeLeaderboard();
+  subscribeMissionCounts(); // 미션별 완료 인원수(보드 배지) 실시간 구독
   window.fbChatWatch(); // 청년회 메인 채팅 실시간 구독 시작
 
   // 이미 알림을 허용한 사용자는 백그라운드에서 FCM 토큰만 조용히 갱신
@@ -339,7 +342,55 @@ function scheduleEmitMySubs() {
   emitTimer = setTimeout(() => {
     emitTimer = null;
     window.onMySubmissions(Object.assign({}, mySubs));
+    syncMyMissionDone(); // 내 완료 상태를 missionDone 인덱스에 동기화 (변화분만 기록)
   }, 60);
+}
+
+/** 제출이 "완료(유효)"인지 — app.js의 isChecked와 동일 규칙 (사진이 있으면 photo는 항상 설정됨) */
+function isSubValid(sub) {
+  return !!(sub && (sub.photo || sub.test) && sub.revoked !== true);
+}
+
+/** 내 완료 상태를 missionDone/$mid/$uid = true 불리언 인덱스에 동기화
+    ※ 보드의 "완료 인원수" 표시가 사진 전체를 내려받지 않고도 집계되도록 하는 가벼운 색인.
+      변화가 있는 칸만 기록(전환만 set/remove) — 첫 발화 때는 기존 데이터도 자동 백필됨. */
+function syncMyMissionDone() {
+  if (!currentUser) return;
+  // 현재 사용자의 완료 미션 집합 계산
+  var nowDone = {};
+  for (var mid = 0; mid < 25; mid++) {
+    if (isSubValid(mySubs[mid])) nowDone[mid] = true;
+  }
+  var prev = myDoneCache || {};
+  for (var m = 0; m < 25; m++) {
+    var before = prev[m] === true, after = nowDone[m] === true;
+    if (after && !before) set(ref(db, "missionDone/" + m + "/" + currentUser.uid), true).catch(() => {});
+    else if (!after && before) remove(ref(db, "missionDone/" + m + "/" + currentUser.uid)).catch(() => {});
+  }
+  myDoneCache = nowDone;
+}
+
+/* ==========================================================
+   미션별 완료 인원 카운트 — missionDone 인덱스 전체 구독
+   ※ 작은 불리언만 담긴 노드라 전체를 구독해도 매우 가벼움 (사진 다운로드 없음)
+   ========================================================== */
+function subscribeMissionCounts() {
+  if (missionDoneUnsub) { try { missionDoneUnsub(); } catch (e) {} }
+  missionDoneUnsub = onValue(ref(db, "missionDone"), function (snap) {
+    var counts = {};
+    if (snap.exists()) {
+      var val = snap.val();
+      Object.keys(val).forEach(function (mid) {
+        var users = val[mid] || {};
+        var c = 0;
+        Object.keys(users).forEach(function (u) { if (users[u] === true) c++; });
+        counts[mid] = c;
+      });
+    }
+    if (typeof window.onMissionCounts === "function") window.onMissionCounts(counts);
+  }, function (err) {
+    console.warn("미션 카운트 구독 오류:", err);
+  });
 }
 
 function unsubscribeMySubmissions() {
@@ -605,6 +656,10 @@ window.fbRevoke = async function (mid, uid, comment) {
     revokeBy: currentNick,
     revokeTs: Date.now()
   });
+  // 완료 인원 인덱스에서도 제거 (해제 = 미완료) — 대상이 오프라인이어도 카운트가 맞도록
+  try {
+    await remove(ref(db, "missionDone/" + mid + "/" + uid));
+  } catch (e) { console.warn("미션 카운트 인덱스 정리 실패:", e); }
 };
 
 /* ==========================================================
@@ -782,6 +837,8 @@ window.fbAdminDeletePhoto = async function (scope, mid, uid, index) {
     origs.splice(index, 1);  // 원본 경로도 같은 인덱스로 정렬 유지
     if (photos.length === 0) {
       await remove(r);
+      // 제출이 통째로 사라졌으니 완료 인원 인덱스도 정리 (best-effort — 대상이 오프라인이어도 카운트 유지)
+      remove(ref(db, "missionDone/" + mid + "/" + uid)).catch(() => {});
     } else {
       await set(r, Object.assign({}, cur, {
         photo: photos[0],
@@ -849,6 +906,7 @@ window.fbAdminDeleteUser = async function (uid) {
   if (nick) updates["nicknames/" + nick] = null;
   for (let mid = 0; mid < 25; mid++) {
     updates["submissions/" + mid + "/" + uid] = null;
+    updates["missionDone/" + mid + "/" + uid] = null; // 완료 인원 인덱스도 함께 정리
   }
   ["A", "B"].forEach((team) => {
     for (let mid = 0; mid < 25; mid++) {
@@ -1269,6 +1327,8 @@ function cleanupSubscriptions() {
   window.fbMgUnwatchGallery();
   window.fbChatUnwatch();
   if (lbUnsub) { try { lbUnsub(); } catch (e) {} lbUnsub = null; }
+  if (missionDoneUnsub) { try { missionDoneUnsub(); } catch (e) {} missionDoneUnsub = null; }
+  myDoneCache = null;
   mySubs = {};
   lastLBKey = null;
   lbReady = false;
