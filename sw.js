@@ -2,9 +2,44 @@
    '즐거이' 하계수양회 BINGO — 서비스워커
    전략: 앱 셸(문서/JS/CSS 등)은 network-first + 캐시 폴백.
          Firebase/구글 도메인은 절대 가로채지도, 캐시하지도 않음.
+   + 웹 푸시(FCM): 앱이 닫혀 있을 때 공지 푸시를 받아 알림 표시.
    ========================================================== */
 
-const CACHE_NAME = "haggye-bingo-shell-v1";
+/* ---------- 웹 푸시(FCM) — 같은 SW(스코프)가 백그라운드 푸시도 처리 ---------- */
+importScripts("https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js");
+importScripts("https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js");
+try {
+  firebase.initializeApp({
+    apiKey: "AIzaSyCGilIGtjzagJMJgYxc4Zvfn3ThTyeA-Yk",
+    authDomain: "ssch-bingo.firebaseapp.com",
+    projectId: "ssch-bingo",
+    messagingSenderId: "869664164731",
+    appId: "1:869664164731:web:3e3da300fa3238c5f7cbde"
+  });
+  var _msg = firebase.messaging();
+  // 데이터 전용(data-only) 메시지 → 여기서 직접 알림 표시 (중복 표시 방지 설계)
+  _msg.onBackgroundMessage(function (payload) {
+    var d = payload.data || {};
+    self.registration.showNotification(d.title || "📢 공지", {
+      body: d.body || "",
+      icon: "./icon.svg",
+      badge: "./icon.svg",
+      tag: "ssch-announcement",
+      data: { url: "./" }
+    });
+  });
+} catch (e) { /* messaging 미지원 브라우저 등 — 캐시 SW 기능은 계속 동작 */ }
+
+/* 알림 클릭 → 열린 앱 창 포커스, 없으면 새로 열기 */
+self.addEventListener("notificationclick", function (e) {
+  e.notification.close();
+  e.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) { if ("focus" in list[i]) return list[i].focus(); }
+    if (clients.openWindow) return clients.openWindow("./");
+  }));
+});
+
+const CACHE_NAME = "haggye-bingo-shell-v2"; // FCM 추가로 버전 올림 → 새 SW 활성화
 
 /* 미리 캐시할 앱 셸 */
 const SHELL_ASSETS = [

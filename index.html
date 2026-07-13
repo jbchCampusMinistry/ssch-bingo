@@ -88,6 +88,7 @@
       <div class="user-bar">
         <span id="userNick" class="user-nick"></span>
         <span id="adminBadge" class="admin-badge hidden">관리자</span>
+        <button type="button" id="btnEnableNotif" class="btn-logout btn-notif hidden" onclick="handleEnableNotif()">🔔 알림 켜기</button>
         <button class="btn-logout" onclick="handleLogout()">로그아웃</button>
       </div>
     </div>
@@ -238,6 +239,10 @@
       <!-- 뷰1: 회원 목록 -->
       <div id="adminUsersView">
         <p class="modal-desc">이름을 눌러 미션을 관리하거나, 관리자 권한을 부여할 수 있어요.</p>
+        <!-- 공지 푸시 보내기 (관리자 전용 패널이므로 항상 노출) -->
+        <div class="ann-send-bar">
+          <button type="button" class="btn btn-primary btn-sm" onclick="openAnnounceModal()">📢 공지 보내기</button>
+        </div>
         <div id="adminUserList" class="admin-user-list"></div>
       </div>
 
@@ -311,6 +316,40 @@
         <button type="button" class="btn-chat-send" onclick="handleChatSend()">전송</button>
       </div>
     </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 공지 보내기 모달 (관리자 — 대상별 푸시 알림)      -->
+  <!-- ============================================ -->
+  <div id="announceModal" class="modal-overlay hidden" onclick="closeAnnounceModalFromOverlay(event)">
+    <div class="modal">
+      <button class="modal-close" onclick="closeAnnounceModal()" aria-label="닫기">✕</button>
+      <h2 class="modal-title">📢 공지 보내기</h2>
+      <p class="modal-desc">알림을 켠 참가자의 휴대폰으로 푸시가 전송돼요.</p>
+      <div class="ann-target" role="radiogroup" aria-label="공지 대상 선택">
+        <label class="ann-target-opt"><input type="radio" name="annTarget" value="all" checked><span>전체</span></label>
+        <label class="ann-target-opt"><input type="radio" name="annTarget" value="yc"><span>청년회</span></label>
+        <label class="ann-target-opt"><input type="radio" name="annTarget" value="mg"><span>중고등부</span></label>
+      </div>
+      <input id="annTitle" class="nick-input ann-title-input" type="text" maxlength="100"
+             placeholder="제목 (선택)" autocomplete="off">
+      <textarea id="annBody" class="revoke-textarea ann-body-textarea" rows="4" maxlength="2000"
+                placeholder="공지 내용을 입력하세요"></textarea>
+      <p id="annError" class="field-error hidden"></p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="handleSendAnnouncement()">보내기</button>
+        <button class="btn btn-ghost" onclick="closeAnnounceModal()">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 인앱 공지 배너 — 앱이 열려 있을 때(포그라운드) 푸시 수신 시 상단에 표시 -->
+  <div id="announceBanner" class="announce-banner hidden" role="alert">
+    <div class="ab-text">
+      <p id="abTitle" class="ab-title"></p>
+      <p id="abBody" class="ab-body"></p>
+    </div>
+    <button type="button" class="ab-close" onclick="dismissAnnounceBanner()" aria-label="공지 닫기">✕</button>
   </div>
 
   <!-- 사진 선택용 숨은 input -->

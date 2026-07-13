@@ -1129,3 +1129,85 @@ body {
   .ag-item { background: #232a36; }
   .ag-nick { color: #dbe6ff; }
 }
+
+/* ==========================================================
+   웹 푸시 알림 (공지) — 알림 켜기 버튼 / 인앱 배너 / 공지 모달
+   ========================================================== */
+
+/* 헤더의 "🔔 알림 켜기" 버튼 — 로그아웃 버튼과 같은 톤 + 노랑 포인트 */
+.btn-notif {
+  background: var(--yellow);
+  border-color: var(--yellow);
+  color: var(--navy);
+  font-weight: 800;
+}
+.btn-notif:hover { background: #ffe27a; }
+
+/* 인앱 공지 배너 — 앱이 열려 있을 때 푸시 수신 시 화면 상단 고정 */
+.announce-banner {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: 50%; transform: translateX(-50%);
+  z-index: 110; /* 토스트(100)보다 위 */
+  width: min(520px, calc(100vw - 24px));
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--blue);
+  color: #fff;
+  border: 2px solid var(--yellow);
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 24px rgba(20, 45, 90, 0.4);
+  animation: banner-in 0.25s ease-out;
+}
+@keyframes banner-in {
+  from { opacity: 0; transform: translate(-50%, -12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.ab-text { flex: 1; min-width: 0; }
+.ab-title { font-size: 0.9rem; font-weight: 900; color: var(--yellow); word-break: keep-all; }
+.ab-body {
+  margin-top: 3px;
+  font-size: 0.85rem; font-weight: 600; line-height: 1.45;
+  word-break: keep-all;
+  white-space: pre-wrap; /* 공지 줄바꿈 유지 */
+}
+.ab-close {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  border: none; border-radius: 50%;
+  background: rgba(255,255,255,0.18); color: #fff;
+  font-size: 0.85rem; font-weight: 700;
+  cursor: pointer;
+}
+.ab-close:hover { background: rgba(255,255,255,0.3); }
+
+/* 관리자 패널의 "📢 공지 보내기" 버튼 줄 */
+.ann-send-bar { display: flex; justify-content: center; margin-top: 10px; }
+
+/* 공지 모달 — 대상 선택 세그먼트 (전체/청년회/중고등부) */
+.ann-target { display: flex; gap: 6px; margin-top: 14px; }
+.ann-target-opt { position: relative; flex: 1; }
+.ann-target-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.ann-target-opt span {
+  display: block;
+  text-align: center;
+  border-radius: 999px;
+  background: #eef1f5; color: #555;
+  font-size: 0.82rem; font-weight: 800;
+  padding: 8px 0;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.ann-target-opt input:checked + span { background: var(--blue); color: #fff; }
+.ann-target-opt input:focus-visible + span { outline: 2px solid var(--blue-deep); }
+
+/* 공지 제목/내용 입력 — 닉네임/해제 입력 스타일 재사용 + 정렬·포커스만 조정 */
+.ann-title-input { text-align: left; }
+.ann-body-textarea:focus { border-color: var(--blue); }
+
+/* ---------- 다크모드 (웹 푸시 알림) ---------- */
+@media (prefers-color-scheme: dark) {
+  .announce-banner { background: #2c56ad; }
+  .ann-target-opt span { background: #333c4b; color: #ddd; }
+  .ann-target-opt input:checked + span { background: var(--blue); color: #fff; }
+}

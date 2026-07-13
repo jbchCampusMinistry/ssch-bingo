@@ -310,7 +310,11 @@ window.showLogin = function () {
   closeAdminPanel();
   closeMgTeamModal();
   closeChatPanel();
+  closeAnnounceModal();
+  dismissAnnounceBanner();
   window.clearChat();
+  var notifBtn = document.getElementById("btnEnableNotif");
+  if (notifBtn) notifBtn.classList.add("hidden"); // 알림 UI 상태 초기화
   document.getElementById("nickModal").classList.add("hidden");
   hideLoading();
 };
@@ -341,6 +345,8 @@ window.showMain = function (user, nick, isAdmin) {
     nickEl.title = "";
   }
   document.getElementById("adminBadge").classList.toggle("hidden", !isAdmin);
+
+  updateNotifButton(); // 지원 && 아직 허용 전이면 "🔔 알림 켜기" 버튼 노출
 
   buildBoard();
   refreshBoard();
@@ -2281,6 +2287,131 @@ function formatChatTime(ts) {
 function scrollChatToBottom() {
   var listEl = document.getElementById("chatMessages");
   if (listEl) listEl.scrollTop = listEl.scrollHeight;
+}
+
+/* ==========================================================
+   웹 푸시 알림 — "알림 켜기" 버튼 / 인앱 공지 배너 / 공지 보내기(관리자)
+   ========================================================== */
+
+/** "🔔 알림 켜기" 버튼 표시 여부 갱신 — 지원 && 아직 허용 전일 때만 노출 */
+function updateNotifButton() {
+  var btn = document.getElementById("btnEnableNotif");
+  if (!btn) return;
+  var st = (typeof window.fbNotifStatus === "function")
+    ? window.fbNotifStatus()
+    : { supported: false, permission: "unsupported" };
+  btn.classList.toggle("hidden", !(st.supported && st.permission !== "granted"));
+}
+
+/** "🔔 알림 켜기" 클릭 — 권한 요청 + FCM 토큰 등록 (firebase.js) */
+function handleEnableNotif() {
+  if (typeof window.fbEnableNotifications !== "function") {
+    showToast("Firebase 모듈을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+    return;
+  }
+  showLoading();
+  window.fbEnableNotifications()
+    .then(function (res) {
+      hideLoading();
+      if (res && res.ok) {
+        updateNotifButton(); // 허용됐으니 버튼 숨김
+        showToast("알림을 켰어요 🔔");
+      } else if (res && res.reason === "denied") {
+        showToast("브라우저 알림이 차단돼 있어요. 설정에서 허용해 주세요.");
+      } else if (res && res.reason === "unsupported") {
+        showToast("이 브라우저/기기는 알림을 지원하지 않아요. (아이폰은 홈 화면에 추가 후 사용)");
+      } else {
+        showToast("알림 설정에 실패했어요.");
+      }
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("알림 켜기 실패:", err);
+      showToast("알림 설정에 실패했어요.");
+    });
+}
+
+/* ---------- 인앱 공지 배너 (앱이 열려 있을 때 푸시 수신 — firebase.js의 onMessage가 호출) ---------- */
+
+var _annBannerTimer = null;
+
+/** 포그라운드 공지 수신 → 상단 고정 배너로 표시 (~8초 뒤 자동 닫힘) */
+window.onAnnouncement = function (title, body) {
+  var banner = document.getElementById("announceBanner");
+  if (!banner) return;
+  // textContent 사용 — 서버에서 온 문자열이라 HTML 이스케이프 필수
+  document.getElementById("abTitle").textContent = title || "📢 공지";
+  document.getElementById("abBody").textContent = body || "";
+  banner.classList.remove("hidden");
+  if (_annBannerTimer) clearTimeout(_annBannerTimer);
+  _annBannerTimer = setTimeout(dismissAnnounceBanner, 8000);
+};
+
+function dismissAnnounceBanner() {
+  if (_annBannerTimer) { clearTimeout(_annBannerTimer); _annBannerTimer = null; }
+  var banner = document.getElementById("announceBanner");
+  if (banner) banner.classList.add("hidden");
+}
+
+/* ---------- 공지 보내기 모달 (관리자 패널의 "📢 공지 보내기" 버튼) ---------- */
+
+var ANN_TARGET_LABELS = { all: "전체", yc: "청년회", mg: "중고등부" };
+
+function openAnnounceModal() {
+  if (!APP_STATE.isAdmin) return;
+  document.getElementById("annTitle").value = "";
+  document.getElementById("annBody").value = "";
+  var radios = document.getElementsByName("annTarget");
+  var i;
+  for (i = 0; i < radios.length; i++) radios[i].checked = radios[i].value === "all"; // 기본: 전체
+  document.getElementById("annError").classList.add("hidden");
+  document.getElementById("announceModal").classList.remove("hidden");
+}
+
+function closeAnnounceModal() {
+  var modal = document.getElementById("announceModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+/** 오버레이(바깥) 클릭 시에만 닫기 */
+function closeAnnounceModalFromOverlay(e) {
+  if (e.target === document.getElementById("announceModal")) closeAnnounceModal();
+}
+
+function handleSendAnnouncement() {
+  var title = (document.getElementById("annTitle").value || "").trim();
+  var body = (document.getElementById("annBody").value || "").trim();
+  var errEl = document.getElementById("annError");
+
+  if (!body) {
+    errEl.textContent = "공지 내용을 입력해 주세요.";
+    errEl.classList.remove("hidden");
+    return;
+  }
+  errEl.classList.add("hidden");
+
+  // 대상 라디오(전체/청년회/중고등부) 읽기
+  var target = "all";
+  var radios = document.getElementsByName("annTarget");
+  var i;
+  for (i = 0; i < radios.length; i++) {
+    if (radios[i].checked) { target = radios[i].value; break; }
+  }
+
+  if (typeof window.fbSendAnnouncement !== "function") return;
+  showLoading();
+  window.fbSendAnnouncement(target, title, body)
+    .then(function () {
+      hideLoading();
+      closeAnnounceModal();
+      showToast("공지를 보냈어요 📢 (대상: " + (ANN_TARGET_LABELS[target] || target) + ")");
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("공지 보내기 실패:", err);
+      errEl.textContent = (err && err.message) || "공지를 보내지 못했어요. 다시 시도해 주세요.";
+      errEl.classList.remove("hidden");
+    });
 }
 
 /* ==========================================================
