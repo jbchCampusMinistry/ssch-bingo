@@ -5,23 +5,13 @@
    + 웹 푸시(FCM): 앱이 닫혀 있을 때 공지 푸시를 받아 알림 표시.
    ========================================================== */
 
-/* ---------- 웹 푸시(FCM) ----------
-   앱에서 토큰 발급(getToken) 호환을 위해 messaging 초기화는 유지하되,
-   실제 알림 "표시"는 아래 raw push 핸들러가 담당한다.
-   (firebase의 onBackgroundMessage가 일부 기기/브라우저 — 특히 iOS — 에서
-    발화하지 않아 "이 사이트가 백그라운드에서 업데이트되었습니다" 기본 문구만 뜨는 문제 방지) */
-importScripts("https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js");
-importScripts("https://www.gstatic.com/firebasejs/10.12.5/firebase-messaging-compat.js");
-try {
-  firebase.initializeApp({
-    apiKey: "AIzaSyCGilIGtjzagJMJgYxc4Zvfn3ThTyeA-Yk",
-    authDomain: "ssch-bingo.firebaseapp.com",
-    projectId: "ssch-bingo",
-    messagingSenderId: "869664164731",
-    appId: "1:869664164731:web:3e3da300fa3238c5f7cbde"
-  });
-  firebase.messaging(); // 토큰 발급 호환용 (알림 표시는 아래 push 핸들러가 담당)
-} catch (e) { /* messaging 미지원 브라우저 등 — 캐시 SW 기능은 계속 동작 */ }
+/* ---------- 웹 푸시 ----------
+   FCM SDK(importScripts)를 서비스워커에 넣지 않고 "표준 push 이벤트"만 직접 처리한다.
+   이유:
+   1) importScripts(firebase) 로딩이 실패하면 서비스워커 설치가 통째로 실패해
+      옛 SW가 계속 돌며 알림이 안 뜨던 문제를 원천 차단.
+   2) 일부 기기/브라우저(특히 iOS)에서 firebase onBackgroundMessage가 발화 안 하던 문제 회피.
+   ※ 토큰 발급(getToken)은 앱쪽 firebase-messaging SDK가 담당하므로 SW엔 firebase 불필요. */
 
 /* 푸시 수신 → 항상 알림을 직접 표시 (data/notification 어느 형태든 방어적으로 파싱).
    event.waitUntil로 표시가 끝날 때까지 대기 → 브라우저 기본 문구가 뜨지 않음. */
@@ -58,7 +48,7 @@ self.addEventListener("notificationclick", function (e) {
   }));
 });
 
-const CACHE_NAME = "haggye-bingo-shell-v4"; // 알림 항상 표시로 수정 → 새 SW 활성화
+const CACHE_NAME = "haggye-bingo-shell-v5"; // firebase importScripts 제거(순수 push) → 새 SW 활성화
 
 /* 미리 캐시할 앱 셸 */
 const SHELL_ASSETS = [

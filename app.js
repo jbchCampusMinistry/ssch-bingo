@@ -109,10 +109,11 @@ function initApp() {
   }
 
   // 서비스워커 등록 (지원 브라우저 + http(s) 환경에서만)
+  // updateViaCache:"none" → SW 스크립트를 항상 새로 받아 업데이트가 확실히 반영됨
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
-    navigator.serviceWorker.register("./sw.js").catch(function (err) {
-      console.warn("서비스워커 등록 실패:", err);
-    });
+    navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" })
+      .then(function (reg) { try { reg.update(); } catch (e) {} }) // 방문 시마다 업데이트 확인
+      .catch(function (err) { console.warn("서비스워커 등록 실패:", err); });
   }
 }
 
