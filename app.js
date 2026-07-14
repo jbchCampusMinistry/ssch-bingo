@@ -383,6 +383,8 @@ window.showMain = function (user, nick, isAdmin) {
   equalizeBoard("board"); // 화면이 보이는 지금 칸 크기 통일
   drawBingoLines();
   hideLoading();
+
+  maybeAskNotifPermission(); // 처음 들어온 사람에게 알림 권한 창 (허용/차단하면 다시 안 뜸)
 };
 
 /** 닉네임 설정 모달 표시 (첫 로그인) */
@@ -2495,6 +2497,30 @@ function updateNotifButton() {
     ? window.fbNotifStatus()
     : { supported: false, permission: "unsupported" };
   btn.classList.toggle("hidden", !(st.supported && st.permission !== "granted"));
+}
+
+/* ---------- 첫 진입 시 알림 권한 요청 ----------
+   앱에 처음 들어오면 브라우저 권한 창을 바로 띄운다.
+   한 번 허용(또는 차단)하면 permission이 "default"가 아니게 되어 다시 뜨지 않는다. */
+
+/** 처음 들어온 사람에게 브라우저 알림 권한 창 표시 (아직 묻기 전일 때만) */
+function maybeAskNotifPermission() {
+  var st = (typeof window.fbNotifStatus === "function")
+    ? window.fbNotifStatus()
+    : { supported: false, permission: "unsupported" };
+  if (!st.supported) return;                 // 지원 안 하는 브라우저/기기
+  if (st.permission !== "default") return;   // 이미 허용/차단한 사람 → 다시 묻지 않음
+  if (typeof window.fbEnableNotifications !== "function") return;
+
+  // 화면이 뜬 직후 권한 창이 겹치지 않도록 살짝 지연 (토스트는 띄우지 않음 — 조용히 처리)
+  window.setTimeout(function () {
+    window.fbEnableNotifications()
+      .then(function (res) {
+        updateNotifButton(); // 허용됐으면 "🔔 알림 켜기" 버튼 숨김, 거절이면 그대로 노출
+        if (res && res.ok) showToast("알림을 켰어요 🔔");
+      })
+      .catch(function (err) { console.warn("알림 권한 요청 실패:", err); });
+  }, 600);
 }
 
 /** "🔔 알림 켜기" 클릭 — 권한 요청 + FCM 토큰 등록 (firebase.js) */
