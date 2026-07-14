@@ -225,6 +225,13 @@ async function enterMain() {
       lastLBKey = (v.checks || 0) + ":" + (v.bingos || 0);
     }
   } catch (e) { /* 무시 */ }
+
+  // 마스터 관리자는 순위표에 나오지 않는다 — 예전에 기록된 항목이 있으면 지운다
+  if (isMasterAccount()) {
+    try {
+      await remove(ref(db, "leaderboard/" + currentUser.uid));
+    } catch (e) { console.warn("마스터 순위 항목 정리 실패:", e); }
+  }
   lbReady = true;
 
   window.showMain({ uid: currentUser.uid, email: currentUser.email }, currentNick, currentIsAdmin);
@@ -685,9 +692,15 @@ function subscribeLeaderboard() {
   });
 }
 
+/** 마스터 관리자 계정인지 (순위표에서 제외 — 운영자는 게임 참가자가 아님) */
+function isMasterAccount() {
+  return !!(currentUser && ADMIN_EMAILS.includes(currentUser.email || ""));
+}
+
 /** 내 순위 데이터 갱신 (app.js의 refreshBoard가 호출) */
 window.fbUpdateLeaderboard = function (checks, bingos) {
   if (!currentUser || !currentNick || !lbReady) return;
+  if (isMasterAccount()) return; // 마스터는 순위표에 기록하지 않음
   const key = checks + ":" + bingos;
   if (key === lastLBKey) return; // 값이 같으면 재기록 안 함 (동점 ts 보존)
   lastLBKey = key;
