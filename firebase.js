@@ -654,11 +654,25 @@ window.fbUpdateLeaderboard = function (checks, bingos) {
    ========================================================== */
 window.fbRevoke = async function (mid, uid, comment, missionTitle) {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
-  await update(ref(db, "submissions/" + mid + "/" + uid), {
+  const r = ref(db, "submissions/" + mid + "/" + uid);
+
+  // 실패 처리된 인증샷은 남기지 않는다 — 지우기 전에 원본(Storage) 경로부터 확보
+  let origs = [];
+  try {
+    const snap = await get(r);
+    const cur = snap.exists() ? snap.val() : null;
+    origs = toOrigArray(cur ? cur.origs : null, photosOf(cur).length);
+  } catch (e) { console.warn("원본 경로 조회 실패(압축본만 삭제):", e); }
+
+  // 해제 기록은 남기고 사진 필드만 제거 (RTDB는 null = 해당 필드 삭제)
+  await update(r, {
     revoked: true,
     revokeComment: comment,
     revokeBy: currentNick,
-    revokeTs: Date.now()
+    revokeTs: Date.now(),
+    photo: null,
+    photos: null,
+    origs: null
   });
   // 완료 인원 인덱스에서도 제거 (해제 = 미완료) — 대상이 오프라인이어도 카운트가 맞도록
   try {
@@ -674,6 +688,8 @@ window.fbRevoke = async function (mid, uid, comment, missionTitle) {
       ts: Date.now()
     });
   } catch (e) { console.warn("미션 실패 알림 발송 실패:", e); }
+
+  origs.forEach((p) => deleteOriginal(p)); // 원본은 백그라운드 정리 (await 금지 — UI 멈춤 방지)
 };
 
 /* ==========================================================
@@ -737,6 +753,81 @@ window.fbGetUserSubs = async function (uid) {
     if (snap.exists()) map[mid] = snap.val();
   });
   return map;
+};
+
+/* ==========================================================
+   window로 노출: 관리자 — 실패(해제) 처리된 옛 사진 일괄 정리
+   ※ 지금은 해제하는 순간 사진이 함께 지워지지만,
+     그 기능이 생기기 전에 해제된 건들은 사진이 DB에 남아 있어 한 번 청소해 준다.
+   ========================================================== */
+
+/** origs 값(배열/객체/문자열)에서 실제 Storage 경로 문자열만 뽑기 */
+function origPathsOf(val) {
+  if (!val) return [];
+  let arr;
+  if (Array.isArray(val)) arr = val;
+  else if (typeof val === "object") arr = Object.keys(val).map((k) => val[k]);
+  else arr = [val];
+  return arr.filter((p) => typeof p === "string" && p.length > 0);
+}
+
+/** 해제(실패)됐는데 사진이 남아 있는 제출을 모두 찾아 사진 삭제
+    @returns {Promise<{cleared:number, origs:number}>} 정리한 제출 수 / 삭제 예약된 원본 수 */
+window.fbPurgeRevokedPhotos = async function () {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  let cleared = 0;
+  const origPaths = [];
+
+  // 청년회 — submissions/<mid>/<uid>
+  const subSnap = await get(ref(db, "submissions")).catch(() => null);
+  if (subSnap && subSnap.exists()) {
+    const subs = subSnap.val() || {};
+    for (const mid of Object.keys(subs)) {
+      const bySub = subs[mid] || {};
+      for (const uid of Object.keys(bySub)) {
+        const s = bySub[uid] || {};
+        if (s.revoked !== true) continue;
+        const paths = origPathsOf(s.origs);
+        if (photosOf(s).length === 0 && paths.length === 0) continue; // 이미 깨끗한 건 건너뜀
+        await update(ref(db, "submissions/" + mid + "/" + uid), {
+          photo: null, photos: null, origs: null
+        });
+        paths.forEach((p) => origPaths.push(p));
+        cleared++;
+      }
+    }
+  }
+
+  // 중고등부 — mgSubmissions(메타) / mgPhotos(사진) / mgOrigs(원본 경로)
+  for (const team of ["A", "B"]) {
+    const [metaSnap, ogSnap] = await Promise.all([
+      get(ref(db, "mgSubmissions/" + team)).catch(() => null),
+      get(ref(db, "mgOrigs/" + team)).catch(() => null)
+    ]);
+    if (!metaSnap || !metaSnap.exists()) continue;
+    const metas = metaSnap.val() || {};
+    const origsNode = ogSnap && ogSnap.exists() ? ogSnap.val() : {};
+    for (const mid of Object.keys(metas)) {
+      const byUid = metas[mid] || {};
+      for (const uid of Object.keys(byUid)) {
+        const m = byUid[uid] || {};
+        if (m.revoked !== true) continue;
+        const base = "/" + team + "/" + mid + "/" + uid;
+        const pSnap = await get(ref(db, "mgPhotos" + base)).catch(() => null);
+        const hasPhotos = !!(pSnap && pSnap.exists());
+        const paths = origPathsOf((origsNode[mid] || {})[uid]);
+        if (!hasPhotos && paths.length === 0 && m.hasPhoto !== true) continue; // 이미 깨끗
+        await update(ref(db, "mgSubmissions" + base), { hasPhoto: false, photoCount: 0 });
+        await remove(ref(db, "mgPhotos" + base));
+        try { await remove(ref(db, "mgOrigs" + base)); } catch (e) { /* 경로 기록만 남아도 무해 */ }
+        paths.forEach((p) => origPaths.push(p));
+        cleared++;
+      }
+    }
+  }
+
+  origPaths.forEach((p) => deleteOriginal(p)); // 원본은 백그라운드 정리 (await 금지)
+  return { cleared: cleared, origs: origPaths.length };
 };
 
 /* ==========================================================
@@ -1192,15 +1283,33 @@ window.fbMgTestCheck = async function (team, mid, on) {
   }
 };
 
-/** 관리자 체크 해제 (중고등부) — 당사자에게 미션 실패 알림도 발송 */
+/** 관리자 체크 해제 (중고등부) — 인증샷 자동 삭제 + 당사자에게 미션 실패 알림 발송 */
 window.fbMgRevoke = async function (team, mid, uid, comment, missionTitle) {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
-  await update(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + uid), {
+  const base = "/" + team + "/" + mid + "/" + uid;
+  const pr = ref(db, "mgPhotos" + base);
+  const or = ref(db, "mgOrigs" + base);
+
+  // 실패 처리된 인증샷은 남기지 않는다 — 지우기 전에 원본(Storage) 경로부터 확보
+  let origs = [];
+  try {
+    const [pSnap, oSnap] = await Promise.all([get(pr), get(or)]);
+    const photos = pSnap.exists() ? toPhotoArray(pSnap.val()) : [];
+    origs = toOrigArray(oSnap.exists() ? oSnap.val() : null, photos.length);
+  } catch (e) { console.warn("원본 경로 조회 실패(압축본만 삭제):", e); }
+
+  // 메타(해제 기록)를 먼저 갱신해 완료 상태부터 풀고, 사진 노드는 그다음에 삭제
+  await update(ref(db, "mgSubmissions" + base), {
     revoked: true,
     revokeComment: comment,
     revokeBy: currentNick,
-    revokeTs: Date.now()
+    revokeTs: Date.now(),
+    hasPhoto: false,
+    photoCount: 0
   });
+  await remove(pr);
+  try { await remove(or); } catch (e) { /* 원본 경로 기록만 남아도 무해 */ }
+
   // 당사자에게 미션 실패 푸시 알림 (best-effort — 청년회 fbRevoke와 동일 경로)
   try {
     await push(ref(db, "directNotifs"), {
@@ -1210,6 +1319,8 @@ window.fbMgRevoke = async function (team, mid, uid, comment, missionTitle) {
       ts: Date.now()
     });
   } catch (e) { console.warn("미션 실패 알림 발송 실패:", e); }
+
+  origs.forEach((p) => deleteOriginal(p)); // 원본은 백그라운드 정리 (await 금지 — UI 멈춤 방지)
 };
 
 /* ==========================================================

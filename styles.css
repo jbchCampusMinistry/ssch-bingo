@@ -508,6 +508,14 @@ body {
   text-align: left;
 }
 .admin-comment .ac-label { display: block; font-weight: 900; margin-bottom: 2px; }
+.admin-comment .ac-gone { display: block; margin-top: 4px; font-weight: 700; opacity: 0.85; }
+
+/* 모달 안내 문구 (미션 실패 모달의 사진 삭제 안내 등) */
+.modal-hint {
+  margin: -6px 0 14px;
+  font-size: 0.75rem; color: #7c8494;
+  word-break: keep-all; line-height: 1.5;
+}
 
 /* 미션 실패 알림 모달 — 사유 문구 */
 .fail-comment {
@@ -778,6 +786,8 @@ body {
   background: #e8ebf0; color: #7c8494;
   font-size: 0.78rem; font-weight: 800;
 }
+/* 실패 처리로 사진이 삭제된 칸 */
+.gi-fail-ph { background: #fdecec; color: var(--red); }
 
 /* 사진 크게 보기 (라이트박스 — 여러 장이면 스와이프/버튼으로 넘겨보기) */
 .lightbox {
@@ -914,6 +924,7 @@ body {
   .ac-pop-test { background: #2b3342; color: #aab3c0; }
   .test-check-info { color: #dbe6ff; }
   .gi-test-ph { background: #333c4b; color: #98a3b6; }
+  .gi-fail-ph { background: #46262a; color: var(--red); }
 }
 
 /* ==========================================================
@@ -1147,6 +1158,7 @@ body {
 
   /* 사진 3장 UI */
   .mp-hint { color: #98a3b6; }
+  .modal-hint { color: #98a3b6; }
   .mp-max-note { color: #98a3b6; }
   .mp-del { border-color: #232a36; }
 

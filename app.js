@@ -539,6 +539,12 @@ window.renderGallery = function (mid, items) {
       ph.className = "gi-test-ph";
       ph.textContent = "🧪 테스트 체크";
       div.appendChild(ph);
+    } else if (revoked) {
+      // 실패 처리되면 사진이 자동 삭제됨 → 빈 타일 대신 안내 플레이스홀더
+      var fph = document.createElement("div");
+      fph.className = "gi-test-ph gi-fail-ph";
+      fph.textContent = "🗑️ 사진 삭제됨";
+      div.appendChild(fph);
     }
 
     var nickEl = document.createElement("div");
@@ -735,6 +741,10 @@ function renderMyProof(mid) {
     txt.textContent = "사유: " + (sub.revokeComment || "(사유 없음)") +
       (sub.revokeBy ? " — " + sub.revokeBy : "");
     cmt.appendChild(txt);
+    var gone = document.createElement("span");
+    gone.className = "ac-gone";
+    gone.textContent = "🗑️ 올렸던 사진은 자동으로 삭제됐어요. 다시 도전하려면 새로 올려 주세요.";
+    cmt.appendChild(gone);
     box.appendChild(cmt);
   }
 
@@ -1474,6 +1484,34 @@ function handleAdminLoadPhotos() {
     });
 }
 
+/** [실패 사진 정리] — 예전에 실패 처리됐는데 사진이 DB에 남아 있는 인증샷 일괄 삭제
+    (지금은 fbRevoke/fbMgRevoke가 해제 즉시 지우므로, 기능 추가 전의 옛 데이터용) */
+function handlePurgeRevokedPhotos() {
+  if (!APP_STATE.isAdmin) return;
+  if (typeof window.fbPurgeRevokedPhotos !== "function") return;
+  if (!confirm("실패 처리된 인증샷을 DB와 원본 저장소에서 모두 삭제할까요?\n되돌릴 수 없어요.")) return;
+
+  var btn = document.getElementById("agPurgeBtn");
+  if (btn) btn.disabled = true;
+  showLoading();
+  window.fbPurgeRevokedPhotos()
+    .then(function (res) {
+      hideLoading();
+      if (btn) btn.disabled = false;
+      var n = (res && res.cleared) || 0;
+      showToast(n > 0
+        ? "실패 사진 " + n + "건을 삭제했어요."
+        : "지울 실패 사진이 없어요. 이미 깨끗해요!");
+      if (n > 0 && APP_STATE.adminGallery) handleAdminLoadPhotos(); // 갤러리 새로고침
+    })
+    .catch(function (err) {
+      hideLoading();
+      if (btn) btn.disabled = false;
+      console.warn("실패 사진 정리 실패:", err);
+      showToast("정리에 실패했어요. 권한/네트워크를 확인해 주세요.");
+    });
+}
+
 /** 관리자 갤러리 렌더 — 미션별 × 소속(청년회/중고등부 A·B팀)별 그룹 */
 function renderAdminGallery() {
   var content = document.getElementById("adminGalleryContent");
@@ -2137,6 +2175,10 @@ function renderMgMyProof(mid) {
     txt.textContent = "사유: " + (sub.revokeComment || "(사유 없음)") +
       (sub.revokeBy ? " — " + sub.revokeBy : "");
     cmt.appendChild(txt);
+    var gone = document.createElement("span");
+    gone.className = "ac-gone";
+    gone.textContent = "🗑️ 올렸던 사진은 자동으로 삭제됐어요. 다시 도전하려면 새로 올려 주세요.";
+    cmt.appendChild(gone);
     box.appendChild(cmt);
   }
 
@@ -2278,6 +2320,12 @@ window.renderMgGallery = function (mid, items) {
       ph.className = "gi-test-ph";
       ph.textContent = "🧪 테스트 체크";
       div.appendChild(ph);
+    } else if (revoked) {
+      // 실패 처리되면 사진이 자동 삭제됨 → 빈 타일 대신 안내 플레이스홀더
+      var fph = document.createElement("div");
+      fph.className = "gi-test-ph gi-fail-ph";
+      fph.textContent = "🗑️ 사진 삭제됨";
+      div.appendChild(fph);
     }
 
     var nickEl = document.createElement("div");

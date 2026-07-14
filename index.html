@@ -264,8 +264,10 @@
           <button type="button" id="agLoadBtn" class="btn btn-primary btn-sm" onclick="handleAdminLoadPhotos()">사진 불러오기</button>
           <button type="button" id="agZipAllBtn" class="btn btn-ghost btn-sm hidden" onclick="handleZipAll()">⬇ 압축본 ZIP</button>
           <button type="button" id="agZipOrigBtn" class="btn btn-ghost btn-sm hidden" onclick="handleZipOriginals()">⬇ 원본 전체 ZIP</button>
+          <button type="button" id="agPurgeBtn" class="btn btn-danger btn-sm" onclick="handlePurgeRevokedPhotos()">🗑 실패 사진 정리</button>
         </div>
-        <p class="au-hint">원본 ZIP은 Firebase Storage(Blaze)에 저장된 원본을 내려받습니다. 원본이 없는 사진은 건너뜁니다.</p>
+        <p class="au-hint">원본 ZIP은 Firebase Storage(Blaze)에 저장된 원본을 내려받습니다. 원본이 없는 사진은 건너뜁니다.<br>
+          [실패 사진 정리]는 예전에 실패 처리돼 사진만 남아 있는 인증샷을 DB·원본에서 한 번에 지웁니다. (지금은 실패 처리 시 자동 삭제됩니다)</p>
         <div id="adminGalleryContent" class="ag-content"></div>
       </div>
     </div>
@@ -298,6 +300,7 @@
         <b id="failMission"></b> 미션이<br>관리자에 의해 <b>실패 처리</b>되었어요.
       </p>
       <p id="failComment" class="fail-comment"></p>
+      <p class="modal-hint">🗑️ 올렸던 인증사진은 자동으로 삭제됐어요. 다시 도전하려면 사진을 새로 올려 주세요.</p>
       <div class="modal-actions">
         <button class="btn btn-primary" onclick="closeFailModal()">확인</button>
       </div>
