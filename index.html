@@ -194,12 +194,13 @@
   <!-- ============================================ -->
   <div id="nickModal" class="modal-overlay hidden">
     <div class="modal">
-      <h2 class="modal-title">닉네임 설정</h2>
-      <p class="modal-desc">자기 이름으로 입력해 주세요</p>
+      <h2 class="modal-title" id="nickTitle">닉네임 설정</h2>
+      <p class="modal-desc" id="nickDesc">자기 이름으로 입력해 주세요</p>
       <input id="nickInput" class="nick-input" type="text" maxlength="12"
              placeholder="자기 이름으로 입력해 주세요" autocomplete="off">
       <p id="nickError" class="field-error hidden"></p>
       <div class="modal-actions">
+        <button id="nickCancelBtn" class="btn btn-ghost hidden" onclick="closeNickModal()">취소</button>
         <button class="btn btn-primary" onclick="handleSaveNick()">저장</button>
       </div>
     </div>
@@ -245,6 +246,7 @@
         <!-- 공지 푸시 보내기 (관리자 전용 패널이므로 항상 노출) -->
         <div class="ann-send-bar">
           <button type="button" class="btn btn-primary btn-sm" onclick="openAnnounceModal()">📢 공지 보내기</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="openNickRename()">✏ 내 닉네임 변경</button>
         </div>
         <div id="adminUserList" class="admin-user-list"></div>
       </div>

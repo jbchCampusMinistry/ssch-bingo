@@ -317,6 +317,60 @@ window.fbSaveNickname = async function (nick) {
   await enterMain();
 };
 
+/** 닉네임 변경 (관리자 전용) — 일반 회원은 첫 로그인 때 정한 이름을 그대로 사용
+    표시용으로 복사돼 있는 닉네임(순위/갤러리)도 함께 맞춰 준다. */
+window.fbRenameNickname = async function (nick) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  const oldNick = currentNick;
+  if (nick === oldNick) return;
+
+  // 1) 중복 검사 + 예약 (보안규칙이 경쟁 상황도 차단)
+  const nickRef = ref(db, "nicknames/" + nick);
+  const snap = await get(nickRef);
+  if (snap.exists() && snap.val() !== currentUser.uid) {
+    throw new Error("이미 사용 중인 닉네임이에요. 다른 이름을 입력해 주세요.");
+  }
+  try {
+    await set(nickRef, currentUser.uid);
+  } catch (e) {
+    throw new Error("이미 사용 중인 닉네임이에요. 다른 이름을 입력해 주세요.");
+  }
+
+  // 2) 내 프로필 갱신 → 예전 이름 예약 해제 (순서 중요: 실패해도 새 이름은 이미 내 것)
+  await update(ref(db, "users/" + currentUser.uid), { nick: nick });
+  if (oldNick) {
+    try { await remove(ref(db, "nicknames/" + oldNick)); } catch (e) { /* 남아도 무해 */ }
+  }
+  currentNick = nick;
+
+  // 3) 이미 저장된 곳의 표시 이름 동기화 (없는 노드를 새로 만들지 않도록 있는 것만)
+  try {
+    const lbSnap = await get(ref(db, "leaderboard/" + currentUser.uid));
+    if (lbSnap.exists()) await update(ref(db, "leaderboard/" + currentUser.uid), { nick: nick });
+  } catch (e) { console.warn("순위 닉네임 동기화 실패:", e); }
+
+  for (const mid of Object.keys(mySubs)) { // 청년회 인증샷 (구독 캐시라 추가 읽기 없음)
+    try {
+      await update(ref(db, "submissions/" + mid + "/" + currentUser.uid), { nick: nick });
+    } catch (e) { console.warn("인증샷 닉네임 동기화 실패(mid=" + mid + "):", e); }
+  }
+
+  for (const team of ["A", "B"]) { // 중고등부 인증샷 메타 (사진은 안 읽음 — 가벼움)
+    try {
+      const metaSnap = await get(ref(db, "mgSubmissions/" + team));
+      if (!metaSnap.exists()) continue;
+      const metas = metaSnap.val() || {};
+      for (const mid of Object.keys(metas)) {
+        if (!metas[mid] || !metas[mid][currentUser.uid]) continue;
+        await update(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid), { nick: nick });
+      }
+    } catch (e) { console.warn("중고등부 닉네임 동기화 실패(" + team + "):", e); }
+  }
+
+  // 4) 화면의 내 이름만 갱신 (구독을 다시 걸지 않도록 enterMain은 호출하지 않음)
+  if (typeof window.onNickRenamed === "function") window.onNickRenamed(nick);
+};
+
 /* ==========================================================
    내 제출(인증샷) 실시간 구독 — submissions/$mid/$uid × 25
    ========================================================== */

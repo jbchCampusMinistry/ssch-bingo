@@ -387,13 +387,46 @@ window.showMain = function (user, nick, isAdmin) {
   maybeAskNotifPermission(); // 처음 들어온 사람에게 알림 권한 창 (허용/차단하면 다시 안 뜸)
 };
 
+/** 닉네임 모달이 "변경" 모드인지 (관리자가 관리자 패널에서 연 경우) */
+var _nickRenameMode = false;
+
 /** 닉네임 설정 모달 표시 (첫 로그인) */
 window.showNickModal = function () {
   hideLoading();
+  _nickRenameMode = false;
+  document.getElementById("nickTitle").textContent = "닉네임 설정";
+  document.getElementById("nickDesc").textContent = "자기 이름으로 입력해 주세요";
+  document.getElementById("nickCancelBtn").classList.add("hidden");
   document.getElementById("nickError").classList.add("hidden");
   document.getElementById("nickInput").value = "";
   document.getElementById("nickModal").classList.remove("hidden");
   setTimeout(function () { document.getElementById("nickInput").focus(); }, 100);
+};
+
+/** 닉네임 변경 모달 (관리자 전용 — 관리자 패널의 [✏ 닉네임 변경]) */
+function openNickRename() {
+  if (!APP_STATE.isAdmin) return;
+  closeAdminPanel(); // 모달이 겹치지 않도록 관리자 패널은 닫고 연다
+  _nickRenameMode = true;
+  document.getElementById("nickTitle").textContent = "닉네임 변경";
+  document.getElementById("nickDesc").textContent = "관리자는 닉네임을 언제든 바꿀 수 있어요.";
+  document.getElementById("nickCancelBtn").classList.remove("hidden");
+  document.getElementById("nickError").classList.add("hidden");
+  document.getElementById("nickInput").value = APP_STATE.nick || "";
+  document.getElementById("nickModal").classList.remove("hidden");
+  setTimeout(function () { document.getElementById("nickInput").focus(); }, 100);
+}
+
+function closeNickModal() {
+  document.getElementById("nickModal").classList.add("hidden");
+  _nickRenameMode = false;
+}
+
+/** 닉네임 변경 완료 — 헤더 이름만 갱신 (firebase.js가 호출) */
+window.onNickRenamed = function (nick) {
+  APP_STATE.nick = nick;
+  var nickEl = document.getElementById("userNick");
+  if (nickEl) nickEl.textContent = nick + (APP_STATE.isAdmin ? " 님 ⚙" : " 님");
 };
 
 /** Firebase 설정이 아직 자리표시자일 때 안내 (firebase.js가 호출) */
@@ -664,6 +697,24 @@ function handleSaveNick() {
     return;
   }
   errEl.classList.add("hidden");
+
+  // 변경 모드(관리자) — 저장 후 모달만 닫음. 첫 로그인은 저장 후 메인 화면으로 진입.
+  if (_nickRenameMode) {
+    if (typeof window.fbRenameNickname !== "function") return;
+    showLoading();
+    window.fbRenameNickname(nick)
+      .then(function () {
+        hideLoading();
+        closeNickModal();
+        showToast("닉네임을 “" + nick + "”(으)로 바꿨어요.");
+      })
+      .catch(function (err) {
+        hideLoading();
+        errEl.textContent = err && err.message ? err.message : "닉네임 변경에 실패했어요.";
+        errEl.classList.remove("hidden");
+      });
+    return;
+  }
 
   if (typeof window.fbSaveNickname !== "function") return;
   showLoading();
