@@ -509,6 +509,17 @@ body {
 }
 .admin-comment .ac-label { display: block; font-weight: 900; margin-bottom: 2px; }
 
+/* 미션 실패 알림 모달 — 사유 문구 */
+.fail-comment {
+  color: var(--red);
+  background: #fdecec;
+  border-radius: 10px;
+  font-size: 0.85rem; font-weight: 700;
+  padding: 10px 12px;
+  margin: 4px 0 14px;
+  word-break: break-all;
+}
+
 /* 갤러리 */
 .gallery-title {
   margin-top: 20px;
@@ -888,6 +899,7 @@ body {
   .stat-num { color: #9db8ee; }
   .stat-label { color: #b9c4d6; }
   .admin-comment { background: #46262a; }
+  .fail-comment { background: #46262a; }
   .btn-revoke { background: #46262a; border-color: #7a3d42; }
   .admin-user-row { background: #2b3342; }
   .admin-user-row .au-nick { color: #dbe6ff; }

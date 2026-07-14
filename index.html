@@ -289,6 +289,22 @@
   </div>
 
   <!-- ============================================ -->
+  <!-- 미션 실패 알림 모달 (관리자가 내 인증을 취소했을 때) -->
+  <!-- ============================================ -->
+  <div id="failModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 class="modal-title">❌ 미션 실패</h2>
+      <p class="modal-desc">
+        <b id="failMission"></b> 미션이<br>관리자에 의해 <b>실패 처리</b>되었어요.
+      </p>
+      <p id="failComment" class="fail-comment"></p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="closeFailModal()">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
   <!-- 중고등부 팀 선택 모달 (최초 입장 시 1회)          -->
   <!-- ============================================ -->
   <div id="mgTeamModal" class="modal-overlay hidden">

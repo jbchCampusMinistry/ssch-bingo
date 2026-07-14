@@ -333,6 +333,9 @@ window.showLogin = function () {
   document.getElementById("loginView").classList.remove("hidden");
   closeMissionModal();
   closeRevokeModal();
+  _failQueue = [];        // 계정이 바뀌므로 실패 알림 큐도 초기화
+  _failShowing = false;
+  document.getElementById("failModal").classList.add("hidden");
   closeAdminPanel();
   closeMgTeamModal();
   closeChatPanel();
@@ -409,6 +412,7 @@ window.onMySubmissions = function (subsMap) {
   refreshBoard();
   // 미션 상세 모달이 열려 있으면 내 인증 영역도 다시 그림 (중고등부 모드는 onMgData가 담당)
   if (APP_STATE.currentMid !== null && !APP_STATE.mgMode) renderMyProof(APP_STATE.currentMid);
+  checkMissionFail(APP_STATE.mySubs, "yc"); // 관리자가 취소했으면 실패 알림
 };
 
 /** 미션별 완료 인원수 갱신 — firebase.js가 missionDone 인덱스를 집계해 호출 */
@@ -416,6 +420,74 @@ window.onMissionCounts = function (counts) {
   APP_STATE.missionCounts = counts || {};
   renderMissionCounts();
 };
+
+/* ==========================================================
+   미션 실패 알림 — 관리자가 내 인증을 취소하면 당사자에게 안내
+   푸시(directNotifs)는 앱이 꺼져 있을 때, 아래 모달은 앱을 켜 둔/다시 연 사용자용.
+   이미 본 실패는 revokeTs를 localStorage에 기록해 다시 띄우지 않음.
+   ========================================================== */
+
+var _failQueue = [];      // 아직 안 보여준 실패 { mid, comment, by }
+var _failShowing = false;
+
+function failSeenKey() {
+  return "ssch_fail_seen_" + (APP_STATE.user ? APP_STATE.user.uid : "anon");
+}
+function loadFailSeen() {
+  try { return JSON.parse(localStorage.getItem(failSeenKey()) || "{}") || {}; }
+  catch (e) { return {}; }
+}
+function saveFailSeen(seen) {
+  try { localStorage.setItem(failSeenKey(), JSON.stringify(seen)); } catch (e) {}
+}
+
+/**
+ * 내 제출 맵에서 "새로 취소된 미션"을 찾아 실패 모달로 안내.
+ * @param {Object} subs  { mid: {revoked, revokeTs, revokeComment, revokeBy} }
+ * @param {string} scope "yc" | "mg" — 청년회/중고등부 기록을 따로 관리
+ */
+function checkMissionFail(subs, scope) {
+  if (!APP_STATE.user || !subs) return;
+  var seen = loadFailSeen();
+  var changed = false;
+
+  Object.keys(subs).forEach(function (mid) {
+    var s = subs[mid] || {};
+    if (s.revoked !== true) return;
+    var ts = s.revokeTs || 1;          // 예전 데이터(revokeTs 없음)도 한 번은 안내
+    var key = scope + ":" + mid;
+    if (seen[key] === ts) return;      // 이미 안내한 실패
+    seen[key] = ts;
+    changed = true;
+    _failQueue.push({
+      mid: Number(mid),
+      comment: s.revokeComment || "",
+      by: s.revokeBy || ""
+    });
+  });
+
+  if (changed) saveFailSeen(seen);
+  showNextFail();
+}
+
+/** 큐에 쌓인 실패를 하나씩 모달로 표시 */
+function showNextFail() {
+  if (_failShowing || !_failQueue.length) return;
+  var f = _failQueue.shift();
+  _failShowing = true;
+
+  document.getElementById("failMission").textContent = "「" + (MISSIONS[f.mid] || "미션") + "」";
+  document.getElementById("failComment").textContent =
+    "사유: " + (f.comment || "(사유 없음)") + (f.by ? " — " + f.by : "");
+  document.getElementById("failModal").classList.remove("hidden");
+}
+
+function closeFailModal() {
+  document.getElementById("failModal").classList.add("hidden");
+  _failShowing = false;
+  showNextFail(); // 취소된 미션이 여러 개면 이어서 안내
+}
+window.closeFailModal = closeFailModal;
 
 /** 특정 미션의 갤러리 갱신 */
 window.renderGallery = function (mid, items) {
@@ -657,10 +729,10 @@ function renderMyProof(mid) {
     cmt.className = "admin-comment";
     var lb = document.createElement("span");
     lb.className = "ac-label";
-    lb.textContent = "⚠ 관리자에 의해 체크가 해제되었어요";
+    lb.textContent = "❌ 미션 실패 — 관리자가 인증을 취소했어요";
     cmt.appendChild(lb);
     var txt = document.createElement("span");
-    txt.textContent = "관리자 코멘트: " + (sub.revokeComment || "(코멘트 없음)") +
+    txt.textContent = "사유: " + (sub.revokeComment || "(사유 없음)") +
       (sub.revokeBy ? " — " + sub.revokeBy : "");
     cmt.appendChild(txt);
     box.appendChild(cmt);
@@ -961,7 +1033,7 @@ function handleConfirmRevoke() {
 
   // 중고등부 인증 해제는 팀 경로(fbMgRevoke)로 분기
   var revokeFn = target.mgTeam
-    ? function () { return window.fbMgRevoke(target.mgTeam, target.mid, target.uid, comment); }
+    ? function () { return window.fbMgRevoke(target.mgTeam, target.mid, target.uid, comment, MISSIONS[target.mid]); } // 미션 제목 → 당사자 실패 알림에 사용
     : function () { return window.fbRevoke(target.mid, target.uid, comment, MISSIONS[target.mid]); }; // 미션 제목 → 당사자 해제 알림에 사용
   if (typeof (target.mgTeam ? window.fbMgRevoke : window.fbRevoke) !== "function") return;
   showLoading();
@@ -1957,6 +2029,10 @@ window.onMgData = function (data, myTeam) {
     // 미션 상세 모달이 열려 있으면 내 인증 영역도 다시 그림
     if (APP_STATE.currentMid !== null) renderMgMyProof(APP_STATE.currentMid);
   }
+  // 관리자가 내 인증을 취소했으면 실패 알림 (내 팀 제출만 대상)
+  if (APP_STATE.mgTeam && data && data[APP_STATE.mgTeam]) {
+    checkMissionFail(data[APP_STATE.mgTeam].mine || {}, "mg");
+  }
 };
 
 /** A팀 vs B팀 순위 — 빙고 줄 수 → 완료 수 순 (내 팀 강조) */
@@ -2055,10 +2131,10 @@ function renderMgMyProof(mid) {
     cmt.className = "admin-comment";
     var lb = document.createElement("span");
     lb.className = "ac-label";
-    lb.textContent = "⚠ 관리자에 의해 체크가 해제되었어요";
+    lb.textContent = "❌ 미션 실패 — 관리자가 인증을 취소했어요";
     cmt.appendChild(lb);
     var txt = document.createElement("span");
-    txt.textContent = "관리자 코멘트: " + (sub.revokeComment || "(코멘트 없음)") +
+    txt.textContent = "사유: " + (sub.revokeComment || "(사유 없음)") +
       (sub.revokeBy ? " — " + sub.revokeBy : "");
     cmt.appendChild(txt);
     box.appendChild(cmt);

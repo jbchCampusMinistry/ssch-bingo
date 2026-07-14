@@ -664,16 +664,16 @@ window.fbRevoke = async function (mid, uid, comment, missionTitle) {
   try {
     await remove(ref(db, "missionDone/" + mid + "/" + uid));
   } catch (e) { console.warn("미션 카운트 인덱스 정리 실패:", e); }
-  // 당사자에게 해제 푸시 알림 (best-effort — Cloud Function sendDirectNotif가 발송)
+  // 당사자에게 미션 실패 푸시 알림 (best-effort — Cloud Function sendDirectNotif가 발송)
   // 실패해도 해제 자체는 이미 완료된 상태이므로 무시
   try {
     await push(ref(db, "directNotifs"), {
       uid: uid,
-      title: "⚠ 미션 체크 해제",
-      body: (missionTitle ? "'" + missionTitle + "' " : "") + "인증이 관리자에 의해 해제되었어요." + (comment ? " 사유: " + comment : ""),
+      title: "❌ 미션 실패",
+      body: (missionTitle ? "'" + missionTitle + "' " : "") + "미션이 관리자에 의해 실패 처리되었어요." + (comment ? " 사유: " + comment : ""),
       ts: Date.now()
     });
-  } catch (e) { console.warn("해제 알림 발송 실패:", e); }
+  } catch (e) { console.warn("미션 실패 알림 발송 실패:", e); }
 };
 
 /* ==========================================================
@@ -1192,8 +1192,8 @@ window.fbMgTestCheck = async function (team, mid, on) {
   }
 };
 
-/** 관리자 체크 해제 (중고등부) */
-window.fbMgRevoke = async function (team, mid, uid, comment) {
+/** 관리자 체크 해제 (중고등부) — 당사자에게 미션 실패 알림도 발송 */
+window.fbMgRevoke = async function (team, mid, uid, comment, missionTitle) {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
   await update(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + uid), {
     revoked: true,
@@ -1201,6 +1201,15 @@ window.fbMgRevoke = async function (team, mid, uid, comment) {
     revokeBy: currentNick,
     revokeTs: Date.now()
   });
+  // 당사자에게 미션 실패 푸시 알림 (best-effort — 청년회 fbRevoke와 동일 경로)
+  try {
+    await push(ref(db, "directNotifs"), {
+      uid: uid,
+      title: "❌ 미션 실패",
+      body: (missionTitle ? "'" + missionTitle + "' " : "") + "미션이 관리자에 의해 실패 처리되었어요." + (comment ? " 사유: " + comment : ""),
+      ts: Date.now()
+    });
+  } catch (e) { console.warn("미션 실패 알림 발송 실패:", e); }
 };
 
 /* ==========================================================
