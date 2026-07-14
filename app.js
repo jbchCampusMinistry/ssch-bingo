@@ -1101,7 +1101,12 @@ function closeAdminPanelFromOverlay(e) {
   if (e.target === document.getElementById("adminModal")) closeAdminPanel();
 }
 
-/** 회원 목록 렌더 (firebase.js의 fbWatchUsers가 호출) */
+/** 펼쳐 둔 회원 카드 (uid → true) — 목록이 실시간으로 다시 그려져도 펼침 상태 유지 */
+var _adminExpanded = {};
+
+/** 회원 목록 렌더 (firebase.js의 fbWatchUsers가 호출)
+    카드는 기본 접힘(이름·이메일·뱃지만) → 누르면 아래로 관리 버튼이 펼쳐짐
+    (버튼을 한 줄에 늘어놓으면 카드 밖으로 넘쳐 이름이 가려졌음) */
 window.renderAdminUsers = function (list) {
   var box = document.getElementById("adminUserList");
   if (!box) return;
@@ -1120,17 +1125,19 @@ window.renderAdminUsers = function (list) {
     var isMaster = MASTER_EMAILS.indexOf(u.email) !== -1;
     var isMe = !!(APP_STATE.user && u.uid === APP_STATE.user.uid);
     var displayNick = u.nick || u.email;
+    var expanded = _adminExpanded[u.uid] === true;
 
     var row = document.createElement("div");
-    row.className = "admin-user-row";
+    row.className = "admin-user-row" + (expanded ? " expanded" : "");
 
-    // 좌측: 닉네임(클릭 → 미션 상세) + 이메일
-    var info = document.createElement("button");
-    info.type = "button";
+    /* ---- 접힌 상태에서 보이는 머리 부분 (누르면 펼침/접힘) ---- */
+    var head = document.createElement("button");
+    head.type = "button";
+    head.className = "au-head";
+    head.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+    var info = document.createElement("span");
     info.className = "au-info";
-    info.addEventListener("click", (function (uid, nick) {
-      return function () { openAdminUserDetail(uid, nick); };
-    })(u.uid, displayNick));
 
     var nickEl = document.createElement("span");
     nickEl.className = "au-nick";
@@ -1142,47 +1149,77 @@ window.renderAdminUsers = function (list) {
     emailEl.textContent = u.email || "";
     info.appendChild(emailEl);
 
-    row.appendChild(info);
+    head.appendChild(info);
 
-    // 우측: 관리자 뱃지 / 지정·해제 버튼
-    var right = document.createElement("div");
-    right.className = "au-right";
-
-    if (isMaster) {
-      var mb = document.createElement("span");
-      mb.className = "badge-admin";
-      mb.textContent = "관리자(마스터)";
-      right.appendChild(mb);
-    } else if (u.isAdmin) {
-      var ab = document.createElement("span");
-      ab.className = "badge-admin";
-      ab.textContent = "관리자";
-      right.appendChild(ab);
-      if (!isMe) {
-        var offBtn = document.createElement("button");
-        offBtn.type = "button";
-        offBtn.className = "btn-grant btn-grant-off";
-        offBtn.textContent = "관리자 해제";
-        offBtn.addEventListener("click", (function (uid, nick) {
-          return function () { handleToggleAdmin(uid, nick, false); };
-        })(u.uid, displayNick));
-        right.appendChild(offBtn);
-      }
-    } else {
-      var onBtn = document.createElement("button");
-      onBtn.type = "button";
-      onBtn.className = "btn-grant";
-      onBtn.textContent = "관리자 지정";
-      onBtn.addEventListener("click", (function (uid, nick) {
-        return function () { handleToggleAdmin(uid, nick, true); };
-      })(u.uid, displayNick));
-      right.appendChild(onBtn);
+    if (isMaster || u.isAdmin) {
+      var badge = document.createElement("span");
+      badge.className = "badge-admin";
+      badge.textContent = isMaster ? "관리자(마스터)" : "관리자";
+      head.appendChild(badge);
+    }
+    if (u.mgRole) {
+      var mgBadge = document.createElement("span");
+      mgBadge.className = "badge-mg";
+      mgBadge.textContent = "중고등부" + (u.mgTeam ? " " + u.mgTeam : "");
+      head.appendChild(mgBadge);
     }
 
-    // 중고등부 권한/팀 관리 (마스터 제외)
+    var caret = document.createElement("span");
+    caret.className = "au-caret";
+    caret.textContent = "▾";
+    head.appendChild(caret);
+
+    head.addEventListener("click", (function (uid) {
+      return function () {
+        var open = _adminExpanded[uid] !== true;
+        if (open) _adminExpanded[uid] = true; else delete _adminExpanded[uid];
+        row.classList.toggle("expanded", open);
+        head.setAttribute("aria-expanded", open ? "true" : "false");
+      };
+    })(u.uid));
+
+    row.appendChild(head);
+
+    /* ---- 펼쳤을 때 보이는 관리 버튼들 ---- */
+    var actions = document.createElement("div");
+    actions.className = "au-actions";
+
+    // 미션 관리 (미니 빙고판) — 예전엔 이름 클릭이었으나 이제 옵션 버튼으로
+    var missionBtn = document.createElement("button");
+    missionBtn.type = "button";
+    missionBtn.className = "btn-grant btn-grant-mission";
+    missionBtn.textContent = "🎯 미션 관리";
+    missionBtn.addEventListener("click", (function (uid, nick) {
+      return function () { openAdminUserDetail(uid, nick); };
+    })(u.uid, displayNick));
+    actions.appendChild(missionBtn);
+
+    // 관리자 지정/해제 (마스터는 고정)
     if (!isMaster) {
+      if (u.isAdmin) {
+        if (!isMe) {
+          var offBtn = document.createElement("button");
+          offBtn.type = "button";
+          offBtn.className = "btn-grant btn-grant-off";
+          offBtn.textContent = "관리자 해제";
+          offBtn.addEventListener("click", (function (uid, nick) {
+            return function () { handleToggleAdmin(uid, nick, false); };
+          })(u.uid, displayNick));
+          actions.appendChild(offBtn);
+        }
+      } else {
+        var onBtn = document.createElement("button");
+        onBtn.type = "button";
+        onBtn.className = "btn-grant";
+        onBtn.textContent = "관리자 지정";
+        onBtn.addEventListener("click", (function (uid, nick) {
+          return function () { handleToggleAdmin(uid, nick, true); };
+        })(u.uid, displayNick));
+        actions.appendChild(onBtn);
+      }
+
+      // 중고등부 권한/팀 관리
       if (u.mgRole) {
-        // 팀 선택 (A/B) — 현재 팀이 강조 표시, 클릭 시 관리자 강제 변경
         var teamWrap = document.createElement("span");
         teamWrap.className = "mg-team-mini";
         ["A", "B"].forEach(function (t) {
@@ -1195,7 +1232,7 @@ window.renderAdminUsers = function (list) {
           })(u.uid, displayNick, t, u.mgTeam));
           teamWrap.appendChild(tb);
         });
-        right.appendChild(teamWrap);
+        actions.appendChild(teamWrap);
 
         var mgOffBtn = document.createElement("button");
         mgOffBtn.type = "button";
@@ -1204,7 +1241,7 @@ window.renderAdminUsers = function (list) {
         mgOffBtn.addEventListener("click", (function (uid, nick) {
           return function () { handleToggleMgRole(uid, nick, false); };
         })(u.uid, displayNick));
-        right.appendChild(mgOffBtn);
+        actions.appendChild(mgOffBtn);
       } else {
         var mgOnBtn = document.createElement("button");
         mgOnBtn.type = "button";
@@ -1213,7 +1250,7 @@ window.renderAdminUsers = function (list) {
         mgOnBtn.addEventListener("click", (function (uid, nick) {
           return function () { handleToggleMgRole(uid, nick, true); };
         })(u.uid, displayNick));
-        right.appendChild(mgOnBtn);
+        actions.appendChild(mgOnBtn);
       }
     }
 
@@ -1226,10 +1263,10 @@ window.renderAdminUsers = function (list) {
       delBtn.addEventListener("click", (function (uid, nick) {
         return function () { handleAdminDeleteUser(uid, nick); };
       })(u.uid, displayNick));
-      right.appendChild(delBtn);
+      actions.appendChild(delBtn);
     }
 
-    row.appendChild(right);
+    row.appendChild(actions);
     box.appendChild(row);
   });
 };

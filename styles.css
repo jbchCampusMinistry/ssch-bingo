@@ -599,34 +599,53 @@ body {
   margin-top: 14px;
   max-height: 56vh;
   overflow-y: auto;
+  overflow-x: hidden;   /* 카드가 옆으로 새어 흰 여백이 생기지 않도록 */
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 .admin-user-empty { text-align: center; color: #999; font-size: 0.85rem; padding: 14px 0; }
 
+/* 회원 카드 — 기본은 접힘(이름·이메일·뱃지), 누르면 아래로 관리 버튼이 펼쳐짐 */
 .admin-user-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   background: #f6f8fb;
   border-radius: 12px;
   padding: 8px 10px;
+  overflow: hidden;
+}
+.admin-user-row .au-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  background: none; border: none; padding: 0;
+  font-family: inherit; text-align: left; cursor: pointer;
 }
 .admin-user-row .au-info {
   flex: 1; min-width: 0;
   display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
-  background: none; border: none; padding: 0;
-  font-family: inherit; text-align: left; cursor: pointer;
 }
 .admin-user-row .au-nick {
   font-size: 0.9rem; font-weight: 800; color: var(--navy);
-  text-decoration: underline dotted;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
 }
 .admin-user-row .au-email {
   font-size: 0.7rem; color: #8a93a3;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
 }
-.admin-user-row .au-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.admin-user-row .au-caret {
+  flex-shrink: 0; color: #8a93a3; font-size: 0.8rem;
+  transition: transform 0.15s ease;
+}
+.admin-user-row.expanded .au-caret { transform: rotate(180deg); }
+
+.admin-user-row .au-actions {
+  display: none;
+  flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid #e3e8ef;
+}
+.admin-user-row.expanded .au-actions { display: flex; }
+.btn-grant-mission { background: var(--navy); }
+.btn-grant-mission:hover { background: #1e2a44; }
 
 .btn-grant {
   background: var(--blue); color: #fff;
@@ -645,6 +664,13 @@ body {
   font-size: 0.68rem; font-weight: 800;
   border-radius: 999px; padding: 2px 8px;
   white-space: nowrap;
+}
+/* 중고등부 권한 뱃지 (접힌 카드에서 팀까지 한눈에) */
+.badge-mg {
+  background: #d9f2e6; color: #1c7a52;
+  font-size: 0.68rem; font-weight: 800;
+  border-radius: 999px; padding: 2px 8px;
+  white-space: nowrap; flex-shrink: 0;
 }
 
 /* 관리자 패널 — 상단 탭 (회원 / 갤러리) */
@@ -912,6 +938,9 @@ body {
   .fail-comment { background: #46262a; }
   .btn-revoke { background: #46262a; border-color: #7a3d42; }
   .admin-user-row { background: #2b3342; }
+  .admin-user-row .au-actions { border-top-color: #3a4354; }
+  .admin-user-row .au-caret { color: #8f9bb0; }
+  .badge-mg { background: #24503c; color: #a5e8c6; }
   .admin-user-row .au-nick { color: #dbe6ff; }
   .admin-user-row .au-email { color: #8f9bb0; }
   .btn-grant-off { background: #333c4b; color: #ddd; }
