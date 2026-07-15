@@ -35,6 +35,38 @@ var MISSIONS = [
   "다른 차수 참석하기"
 ];
 
+/* ---------- 중고등부 전용 미션 25칸 (청년회와 별개) ---------- */
+var MG_MISSIONS = [
+  "두 렙돈 헌금하기",
+  "새친구에게 간식 사주기",
+  "선생님 간식 사드리기",
+  "새 영혼을 위해 기도하기 (톡방에 기도했습니다)",
+  "분반별로 5행시 (AI 금지)",
+  "선생님 안마해드리기",
+  "자기 전에 성경읽기 (톡방공유)",
+  "매일 아침 기도로 하루 시작하기",
+  "자기 이름 스크랩해서 인증샷",
+  "포토존에서 분반끼리 촬영",
+  "자신에게 힘이 되었던 성경 말씀 공유 (분반별로 주어진 종이에)",
+  "소망의 동산 가서 인증샷",
+  "상담받기 (구원, 생활)",              // 12번: 중앙 하트 강조 칸
+  "다른 분반 간식 사주기",
+  "분반 학생에게 '사랑해' 표현하기",
+  "말씀시간 졸지 않기",
+  "결단(활동지) 작성후 성경책 꼽아두기",
+  "매 말씀마다 필기 (하계 책자에)",
+  "쓰레기 줍고 인증",
+  "선생님께 '사랑해요' 말하기",
+  "배식 받을 때 감사 인사하기",
+  "매일 분반 큐티 인증하기",
+  "분반끼리 '하계수양회' 주제로 사진찍기",
+  "매점에서 음식 3개 이상 들고 사진찍기",
+  "선생님 꼬옥 안아주기"
+];
+
+/** mid 미션 제목 — 중고등부(isMg)면 MG_MISSIONS, 아니면 청년회 MISSIONS */
+function missionTitleAt(mid, isMg) { return (isMg ? MG_MISSIONS : MISSIONS)[mid] || "미션"; }
+
 /* ---------- 빙고 줄 정의: 5행 + 5열 + 2대각 = 12줄 ---------- */
 var BINGO_LINES = (function () {
   var lines = [];
@@ -513,6 +545,7 @@ function checkMissionFail(subs, scope) {
     changed = true;
     _failQueue.push({
       mid: Number(mid),
+      scope: scope,
       comment: s.revokeComment || "",
       by: s.revokeBy || ""
     });
@@ -528,7 +561,7 @@ function showNextFail() {
   var f = _failQueue.shift();
   _failShowing = true;
 
-  document.getElementById("failMission").textContent = "「" + (MISSIONS[f.mid] || "미션") + "」";
+  document.getElementById("failMission").textContent = "「" + missionTitleAt(f.mid, f.scope === "mg") + "」";
   document.getElementById("failComment").textContent =
     "사유: " + (f.comment || "(사유 없음)") + (f.by ? " — " + f.by : "");
   document.getElementById("failModal").classList.remove("hidden");
@@ -755,7 +788,7 @@ function openMissionModal(mid) {
   APP_STATE.currentMid = mid;
 
   document.getElementById("missionNo").textContent = "MISSION " + (mid + 1) + " / 25";
-  document.getElementById("missionText").textContent = MISSIONS[mid];
+  document.getElementById("missionText").textContent = missionTitleAt(mid, APP_STATE.mgMode);
 
   var gTitle = document.getElementById("galleryTitle");
   if (APP_STATE.mgMode) {
@@ -1086,7 +1119,7 @@ function loadViaImgTag(file) {
 function openRevokeModal(mid, uid, nick, mgTeam) {
   APP_STATE.revokeTarget = { mid: mid, uid: uid, nick: nick, mgTeam: mgTeam || null };
   document.getElementById("revokeTarget").textContent =
-    "“" + (nick || "이 사용자") + "” 님의 「" + MISSIONS[mid] + "」 인증을 해제합니다." +
+    "“" + (nick || "이 사용자") + "” 님의 「" + missionTitleAt(mid, !!mgTeam) + "」 인증을 해제합니다." +
     (mgTeam ? " (중고등부 " + mgTeamName(mgTeam) + ")" : "");
   document.getElementById("revokeComment").value = "";
   document.getElementById("revokeError").classList.add("hidden");
@@ -1113,8 +1146,8 @@ function handleConfirmRevoke() {
 
   // 중고등부 인증 해제는 팀 경로(fbMgRevoke)로 분기
   var revokeFn = target.mgTeam
-    ? function () { return window.fbMgRevoke(target.mgTeam, target.mid, target.uid, comment, MISSIONS[target.mid]); } // 미션 제목 → 당사자 실패 알림에 사용
-    : function () { return window.fbRevoke(target.mid, target.uid, comment, MISSIONS[target.mid]); }; // 미션 제목 → 당사자 해제 알림에 사용
+    ? function () { return window.fbMgRevoke(target.mgTeam, target.mid, target.uid, comment, missionTitleAt(target.mid, true)); } // 미션 제목 → 당사자 실패 알림에 사용
+    : function () { return window.fbRevoke(target.mid, target.uid, comment, missionTitleAt(target.mid, false)); }; // 미션 제목 → 당사자 해제 알림에 사용
   if (typeof (target.mgTeam ? window.fbMgRevoke : window.fbRevoke) !== "function") return;
   showLoading();
   revokeFn()
@@ -2099,7 +2132,7 @@ function buildMgBoard() {
     cell.className = "cell" + (i === 12 ? " center" : "");
     cell.dataset.mid = String(i);
     cell.setAttribute("role", "gridcell");
-    cell.setAttribute("aria-label", (i + 1) + "번 미션: " + MISSIONS[i]);
+    cell.setAttribute("aria-label", (i + 1) + "번 미션: " + MG_MISSIONS[i]);
 
     // 중앙 칸은 핑크 하트 배경 SVG
     if (i === 12) {
@@ -2111,7 +2144,7 @@ function buildMgBoard() {
 
     var label = document.createElement("span");
     label.className = "cell-label";
-    label.textContent = MISSIONS[i];
+    label.textContent = MG_MISSIONS[i];
     cell.appendChild(label);
 
     var check = document.createElement("span");
