@@ -719,6 +719,38 @@ window.fbUpdateLeaderboard = function (checks, bingos) {
    window로 노출: 관리자 체크 해제
    ※ 보안규칙상 DB에 admins/<내 uid> = true 가 있어야 성공
    ========================================================== */
+/* 빙고 줄 정의(순위 재계산용) — app.js의 BINGO_LINES와 동일: 가로5 + 세로5 + 대각2 = 12줄 */
+const LB_BINGO_LINES = (function () {
+  const lines = [];
+  for (let r = 0; r < 5; r++) lines.push([r * 5, r * 5 + 1, r * 5 + 2, r * 5 + 3, r * 5 + 4]);
+  for (let c = 0; c < 5; c++) lines.push([c, c + 5, c + 10, c + 15, c + 20]);
+  lines.push([0, 6, 12, 18, 24]);
+  lines.push([4, 8, 12, 16, 20]);
+  return lines;
+})();
+
+/** 대상 유저의 남은 제출을 다시 세어 순위표(leaderboard)를 즉시 갱신.
+ *  관리자가 해제(취소)하는 순간, 대상이 오프라인이어도 순위가 바로 반영되도록 한다.
+ *  ※ 이미 순위에 있는 유저만 갱신(마스터 등 순위에 없는 유저는 새로 만들지 않음). */
+async function recomputeLeaderboardFor(uid) {
+  const lbSnap = await get(ref(db, "leaderboard/" + uid));
+  if (!lbSnap.exists()) return; // 순위에 없던 유저는 건드리지 않음
+
+  const gets = [];
+  for (let mid = 0; mid < 25; mid++) gets.push(get(ref(db, "submissions/" + mid + "/" + uid)));
+  const snaps = await Promise.all(gets);
+
+  const done = {};
+  let checks = 0;
+  snaps.forEach((snap, mid) => {
+    if (snap.exists() && isSubValid(snap.val())) { done[mid] = true; checks++; }
+  });
+  let bingos = 0;
+  LB_BINGO_LINES.forEach((line) => { if (line.every((m) => done[m] === true)) bingos++; });
+
+  await update(ref(db, "leaderboard/" + uid), { checks: checks, bingos: bingos, ts: Date.now() });
+}
+
 window.fbRevoke = async function (mid, uid, comment, missionTitle) {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
   const r = ref(db, "submissions/" + mid + "/" + uid);
@@ -745,6 +777,10 @@ window.fbRevoke = async function (mid, uid, comment, missionTitle) {
   try {
     await remove(ref(db, "missionDone/" + mid + "/" + uid));
   } catch (e) { console.warn("미션 카운트 인덱스 정리 실패:", e); }
+  // 순위표도 즉시 갱신 — 대상의 남은 체크/빙고를 다시 세어 반영 (오프라인이어도 실시간 반영)
+  try {
+    await recomputeLeaderboardFor(uid);
+  } catch (e) { console.warn("순위표 즉시 갱신 실패(대상 재접속 시 자동 보정):", e); }
   // 당사자에게 미션 실패 푸시 알림 (best-effort — Cloud Function sendDirectNotif가 발송)
   // 실패해도 해제 자체는 이미 완료된 상태이므로 무시
   try {
