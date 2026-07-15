@@ -140,7 +140,7 @@
   <section id="mgView" class="view hidden">
     <div class="hero hero-compact">
       <h1 class="app-title app-title-sm">
-        <span class="t-joy">중고등부</span>
+        <span class="t-joy">'즐거이'</span>
         <span class="t-camp">하계수양회</span>
         <span class="t-bingo">BINGO</span>
       </h1>
@@ -153,13 +153,12 @@
     </div>
 
     <main class="main-body">
-      <!-- 팀 표시 + (관리자) A/B 보기 전환 -->
+      <p class="verse">오라 우리가 여호와께 노래하며 우리 구원의 반석을 향하여 <b>즐거이</b> 부르자 <span class="verse-ref">(시 95:1)</span></p>
+
+      <!-- 팀 표시 + (관리자) 팀 보기 전환 (버튼은 app.js가 4팀으로 생성) -->
       <div class="mg-team-bar">
         <span id="mgTeamIndicator" class="mg-team-indicator"></span>
-        <div id="mgTeamToggle" class="mg-team-toggle hidden" role="group" aria-label="팀 보기 전환">
-          <button type="button" id="mgToggleA" onclick="handleMgViewTeam('A')">A팀</button>
-          <button type="button" id="mgToggleB" onclick="handleMgViewTeam('B')">B팀</button>
-        </div>
+        <div id="mgTeamToggle" class="mg-team-toggle hidden" role="group" aria-label="팀 보기 전환"></div>
       </div>
 
       <!-- 팀 진행 상황 요약 -->
@@ -174,9 +173,9 @@
         <svg id="mgLineOverlay" class="line-overlay" viewBox="0 0 500 500" preserveAspectRatio="none" aria-hidden="true"></svg>
       </div>
 
-      <!-- A팀 vs B팀 순위 -->
+      <!-- 팀 순위 (4팀) -->
       <section class="rank-section">
-        <h2 class="rank-title">🏆 A팀 vs B팀</h2>
+        <h2 class="rank-title">🏆 팀 순위</h2>
         <ol id="mgRankList" class="rank-list">
           <li class="rank-empty">아직 완료한 미션이 없어요</li>
         </ol>
@@ -310,16 +309,28 @@
   </div>
 
   <!-- ============================================ -->
+  <!-- 알림 안내 모달 (첫 진입 — 권한 요청 전 설명)      -->
+  <!-- ============================================ -->
+  <div id="notifPromptModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 class="modal-title">🔔 알림을 켤까요?</h2>
+      <p class="modal-desc">알림을 켜면 <b>공지사항</b>과 <b>진행 상황</b>을<br>실시간으로 받아볼 수 있어요.</p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="handleNotifPromptConfirm()">확인</button>
+        <button class="btn btn-ghost" onclick="handleNotifPromptLater()">나중에</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
   <!-- 중고등부 팀 선택 모달 (최초 입장 시 1회)          -->
   <!-- ============================================ -->
   <div id="mgTeamModal" class="modal-overlay hidden">
     <div class="modal">
       <h2 class="modal-title">🎒 팀 선택</h2>
       <p class="modal-desc">중고등부 빙고는 팀전이에요!<br>소속 팀을 선택해 주세요.<br><b>한 번 선택하면 바꿀 수 없어요.</b> (변경은 관리자에게)</p>
-      <div class="mg-team-pick">
-        <button type="button" class="btn-team btn-team-a" onclick="handlePickMgTeam('A')">A팀</button>
-        <button type="button" class="btn-team btn-team-b" onclick="handlePickMgTeam('B')">B팀</button>
-      </div>
+      <!-- 4팀 버튼은 app.js가 생성 -->
+      <div class="mg-team-pick" id="mgTeamPick"></div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeMgTeamModal()">취소</button>
       </div>

@@ -50,6 +50,23 @@ var BINGO_LINES = (function () {
   return lines;
 })();
 
+/* ---------- 중고등부 팀 정의: 4팀 (중등/고등 × 형제/자매) ----------
+   code = DB 저장/노드 키(mgSubmissions/$code 등), name = 화면 표시, short = 관리자 미니 버튼,
+   gender = 색상 구분(b=형제/파랑, s=자매/분홍) */
+var MG_TEAMS = [
+  { code: "mb", name: "중등부 형제", short: "중형", gender: "b" },
+  { code: "hb", name: "고등부 형제", short: "고형", gender: "b" },
+  { code: "ms", name: "중등부 자매", short: "중자", gender: "s" },
+  { code: "hs", name: "고등부 자매", short: "고자", gender: "s" }
+];
+var MG_TEAM_CODES = MG_TEAMS.map(function (t) { return t.code; });
+var MG_TEAM_BY_CODE = {};
+MG_TEAMS.forEach(function (t) { MG_TEAM_BY_CODE[t.code] = t; });
+/** 팀 코드 → 표시 이름 ("고등부 형제"). 모르는 코드는 그대로 반환 */
+function mgTeamName(code) { return (MG_TEAM_BY_CODE[code] && MG_TEAM_BY_CODE[code].name) || code || ""; }
+/** 유효한 팀 코드인지 */
+function isMgTeamCode(code) { return MG_TEAM_CODES.indexOf(code) !== -1; }
+
 /* ---------- 앱 상태 ---------- */
 var APP_STATE = {
   user: null,          // { uid, email }
@@ -743,7 +760,7 @@ function openMissionModal(mid) {
   var gTitle = document.getElementById("galleryTitle");
   if (APP_STATE.mgMode) {
     // 중고등부 모드 — 팀 갤러리/팀 인증으로 동작
-    if (gTitle) gTitle.textContent = "📸 " + APP_STATE.mgViewTeam + "팀의 인증샷";
+    if (gTitle) gTitle.textContent = "📸 " + mgTeamName(APP_STATE.mgViewTeam) + " 인증샷";
     renderMgMyProof(mid);
     window.renderMgGallery(mid, APP_STATE.mgGallery[mid] || []);
     if (typeof window.fbMgWatchGallery === "function") window.fbMgWatchGallery(APP_STATE.mgViewTeam, mid);
@@ -1070,7 +1087,7 @@ function openRevokeModal(mid, uid, nick, mgTeam) {
   APP_STATE.revokeTarget = { mid: mid, uid: uid, nick: nick, mgTeam: mgTeam || null };
   document.getElementById("revokeTarget").textContent =
     "“" + (nick || "이 사용자") + "” 님의 「" + MISSIONS[mid] + "」 인증을 해제합니다." +
-    (mgTeam ? " (중고등부 " + mgTeam + "팀)" : "");
+    (mgTeam ? " (중고등부 " + mgTeamName(mgTeam) + ")" : "");
   document.getElementById("revokeComment").value = "";
   document.getElementById("revokeError").classList.add("hidden");
   document.getElementById("revokeModal").classList.remove("hidden");
@@ -1213,7 +1230,7 @@ window.renderAdminUsers = function (list) {
     if (u.mgRole) {
       var mgBadge = document.createElement("span");
       mgBadge.className = "badge-mg";
-      mgBadge.textContent = "중고등부" + (u.mgTeam ? " " + u.mgTeam : "");
+      mgBadge.textContent = "중고등부" + (u.mgTeam ? " · " + mgTeamName(u.mgTeam) : "");
       head.appendChild(mgBadge);
     }
 
@@ -1275,14 +1292,15 @@ window.renderAdminUsers = function (list) {
       if (u.mgRole) {
         var teamWrap = document.createElement("span");
         teamWrap.className = "mg-team-mini";
-        ["A", "B"].forEach(function (t) {
+        MG_TEAMS.forEach(function (t) {
           var tb = document.createElement("button");
           tb.type = "button";
-          tb.className = "btn-team-mini" + (u.mgTeam === t ? " active" : "");
-          tb.textContent = t;
+          tb.className = "btn-team-mini team-gender-" + t.gender + (u.mgTeam === t.code ? " active" : "");
+          tb.textContent = t.short;
+          tb.title = t.name;
           tb.addEventListener("click", (function (uid, nick, team, cur) {
             return function () { handleAdminSetMgTeam(uid, nick, team, cur); };
-          })(u.uid, displayNick, t, u.mgTeam));
+          })(u.uid, displayNick, t.code, u.mgTeam));
           teamWrap.appendChild(tb);
         });
         actions.appendChild(teamWrap);
@@ -1348,14 +1366,15 @@ function handleToggleMgRole(uid, nick, on) {
 /** 관리자의 중고등부 팀 변경 */
 function handleAdminSetMgTeam(uid, nick, team, currentTeam) {
   if (team === currentTeam) return;
-  if (!confirm("“" + nick + "” 님을 " + team + "팀으로 지정할까요?")) return;
+  var name = mgTeamName(team);
+  if (!confirm("“" + nick + "” 님을 ‘" + name + "’ 팀으로 지정할까요?")) return;
   if (typeof window.fbAdminSetMgTeam !== "function") return;
 
   showLoading();
   window.fbAdminSetMgTeam(uid, team)
     .then(function () {
       hideLoading();
-      showToast(nick + " 님을 " + team + "팀으로 지정했어요");
+      showToast(nick + " 님을 ‘" + name + "’ 팀으로 지정했어요");
     })
     .catch(function (err) {
       hideLoading();
@@ -1660,7 +1679,7 @@ function renderAdminGallery() {
       grid.className = "ag-grid";
       g.entries.forEach(function (entry) {
         entry.photos.forEach(function (src, n) {
-          grid.appendChild(buildAgItem(m, g.source, entry, src, n, mPhotos, gIdx));
+          grid.appendChild(buildAgItem(m, g.source, g.scope, entry, src, n, mPhotos, gIdx));
           gIdx++;
         });
       });
@@ -1684,7 +1703,7 @@ function renderAdminGallery() {
 }
 
 /** 관리자 갤러리 썸네일 1개 — 클릭: 라이트박스 / ⬇: 개별 다운로드 */
-function buildAgItem(mission, source, entry, src, n, missionPhotos, globalIndex) {
+function buildAgItem(mission, source, scope, entry, src, n, missionPhotos, globalIndex) {
   var item = document.createElement("div");
   item.className = "ag-item" + (entry.revoked ? " revoked" : "");
 
@@ -1718,9 +1737,8 @@ function buildAgItem(mission, source, entry, src, n, missionPhotos, globalIndex)
   });
   meta.appendChild(dl);
 
-  // 🗑 개별 삭제 (관리자) — 소속 문자열 → 삭제 범위 ("청년회"→yc / A팀→A / B팀→B)
+  // 🗑 개별 삭제 (관리자) — scope: "yc"(청년회) 또는 팀 코드(mb/hb/ms/hs)
   if (APP_STATE.isAdmin) {
-    var scope = source === "청년회" ? "yc" : (source.indexOf("A팀") !== -1 ? "A" : "B");
     var del = document.createElement("button");
     del.type = "button";
     del.className = "ag-del";
@@ -1737,7 +1755,7 @@ function buildAgItem(mission, source, entry, src, n, missionPhotos, globalIndex)
   return item;
 }
 
-/** 관리자: 인증샷 1장 하드 삭제 — scope: "yc"(청년회) | "A" | "B"(중고등부 팀) */
+/** 관리자: 인증샷 1장 하드 삭제 — scope: "yc"(청년회) | 팀 코드(mb/hb/ms/hs) */
 function handleAdminDeletePhoto(mid, scope, uid, index, nick) {
   if (!confirm("‘" + nick + "’ 님의 이 사진을 완전히 삭제할까요? 되돌릴 수 없어요.")) return;
   if (typeof window.fbAdminDeletePhoto !== "function") return;
@@ -1969,16 +1987,19 @@ function openMgView() {
 function enterMgView(team) {
   APP_STATE.mgMode = true;
   APP_STATE.mgTeam = team || null;
-  APP_STATE.mgViewTeam = APP_STATE.mgTeam || APP_STATE.mgViewTeam || "A";
+  APP_STATE.mgViewTeam = APP_STATE.mgTeam || APP_STATE.mgViewTeam || MG_TEAM_CODES[0];
   APP_STATE.mgGallery = {};
   closeMgTeamModal();
   closeChatPanel();
   document.getElementById("mainView").classList.add("hidden");
   document.getElementById("mgView").classList.remove("hidden");
 
-  // 관리자만 A/B 보기 전환 토글 노출
+  // 관리자만 팀 보기 전환 토글 노출 (4팀 버튼 동적 생성)
   var toggle = document.getElementById("mgTeamToggle");
-  if (toggle) toggle.classList.toggle("hidden", !APP_STATE.isAdmin);
+  if (toggle) {
+    buildMgTeamToggle();
+    toggle.classList.toggle("hidden", !APP_STATE.isAdmin);
+  }
 
   buildMgBoard();
   refreshMgView();
@@ -1996,9 +2017,40 @@ function backToMainFromMg() {
   refreshBoard(); // 숨겨진 동안 못 그린 빙고 줄 다시 그림
 }
 
+/** 관리자 팀 보기 전환 토글(#mgTeamToggle)에 4팀 버튼을 채운다 (1회 생성) */
+function buildMgTeamToggle() {
+  var toggle = document.getElementById("mgTeamToggle");
+  if (!toggle || toggle.getAttribute("data-built") === "1") return;
+  toggle.innerHTML = "";
+  MG_TEAMS.forEach(function (t) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("data-team", t.code);
+    b.textContent = t.short; // 좁은 토글이라 짧은 이름
+    b.title = t.name;
+    b.addEventListener("click", function () { handleMgViewTeam(t.code); });
+    toggle.appendChild(b);
+  });
+  toggle.setAttribute("data-built", "1");
+}
+
 /* ---------- 팀 선택 모달 (최초 1회 — 이후엔 보안규칙이 변경 차단) ---------- */
 
 function openMgTeamModal() {
+  // 4팀 큰 버튼 채우기 (1회)
+  var pick = document.getElementById("mgTeamPick");
+  if (pick && pick.getAttribute("data-built") !== "1") {
+    pick.innerHTML = "";
+    MG_TEAMS.forEach(function (t) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn-team btn-team-" + t.gender;
+      b.textContent = t.name;
+      b.addEventListener("click", function () { handlePickMgTeam(t.code); });
+      pick.appendChild(b);
+    });
+    pick.setAttribute("data-built", "1");
+  }
   document.getElementById("mgTeamModal").classList.remove("hidden");
 }
 
@@ -2008,7 +2060,8 @@ function closeMgTeamModal() {
 }
 
 function handlePickMgTeam(team) {
-  if (!confirm(team + "팀을 선택할까요?\n한 번 선택하면 바꿀 수 없어요! (변경은 관리자에게)")) return;
+  var name = mgTeamName(team);
+  if (!confirm("‘" + name + "’ 팀을 선택할까요?\n한 번 선택하면 바꿀 수 없어요! (변경은 관리자에게)")) return;
   if (typeof window.fbMgSetMyTeam !== "function") return;
 
   showLoading();
@@ -2020,7 +2073,7 @@ function handlePickMgTeam(team) {
         showToast("팀 선택에 실패했어요. 다시 시도해 주세요.");
         return;
       }
-      showToast(team + "팀에 배정됐어요! 함께 빙고를 채워 보세요 🎉");
+      showToast("‘" + name + "’ 팀에 배정됐어요! 함께 빙고를 채워 보세요 🎉");
       enterMgView(res.team);
     })
     .catch(function (err) {
@@ -2080,7 +2133,7 @@ function buildMgBoard() {
 
 /** 보고 있는 팀 기준으로 mid 칸이 완료(팀원 중 1명이라도 유효 인증)인지 */
 function isMgChecked(mid) {
-  var team = APP_STATE.mgViewTeam || "A";
+  var team = APP_STATE.mgViewTeam || MG_TEAM_CODES[0];
   var data = APP_STATE.mgData;
   return !!(data && data[team] && data[team].done && data[team].done[mid] === true);
 }
@@ -2102,7 +2155,7 @@ function drawMgBingoLines() {
 
 /** 중고등부 화면 전체 갱신 — 보드 칠하기 + 요약 + 팀 표시 + 순위 */
 function refreshMgView() {
-  var team = APP_STATE.mgViewTeam || "A";
+  var team = APP_STATE.mgViewTeam || MG_TEAM_CODES[0];
   var data = (APP_STATE.mgData && APP_STATE.mgData[team]) || { done: {}, counts: {}, mine: {} };
 
   buildMgBoard(); // 안전장치 (렌더 전 호출 대비)
@@ -2128,21 +2181,24 @@ function refreshMgView() {
   if (elB) elB.textContent = String(bingos);
   if (elC) elC.textContent = String(checks);
 
-  // 팀 표시 (멤버: 내 팀 / 관리자: 보고 있는 팀)
+  // 팀 표시 (멤버: 내 팀 이름 / 관리자: 보고 있는 팀 이름)
   var ind = document.getElementById("mgTeamIndicator");
   if (ind) {
+    var shownCode = APP_STATE.mgTeam || team;
     ind.textContent = APP_STATE.mgTeam
-      ? "우리 팀: " + APP_STATE.mgTeam + "팀"
-      : team + "팀 보드 (관리자 보기)";
-    ind.classList.toggle("team-a", (APP_STATE.mgTeam || team) === "A");
-    ind.classList.toggle("team-b", (APP_STATE.mgTeam || team) === "B");
+      ? mgTeamName(APP_STATE.mgTeam)
+      : mgTeamName(team) + " 보드 (관리자 보기)";
+    var g = (MG_TEAM_BY_CODE[shownCode] && MG_TEAM_BY_CODE[shownCode].gender) || "b";
+    ind.classList.toggle("team-gender-b", g === "b");
+    ind.classList.toggle("team-gender-s", g === "s");
   }
 
-  // 관리자 토글 강조
-  var btnA = document.getElementById("mgToggleA");
-  var btnB = document.getElementById("mgToggleB");
-  if (btnA) btnA.classList.toggle("active", team === "A");
-  if (btnB) btnB.classList.toggle("active", team === "B");
+  // 관리자 토글 강조 (버튼은 buildMgTeamToggle이 동적 생성)
+  var toggleBtns = document.querySelectorAll("#mgTeamToggle button");
+  var bi;
+  for (bi = 0; bi < toggleBtns.length; bi++) {
+    toggleBtns[bi].classList.toggle("active", toggleBtns[bi].getAttribute("data-team") === team);
+  }
 
   renderMgRanking();
 }
@@ -2151,7 +2207,7 @@ function refreshMgView() {
 window.onMgData = function (data, myTeam) {
   APP_STATE.mgData = data || null;
   APP_STATE.mgTeam = myTeam || null;
-  if (!APP_STATE.mgViewTeam) APP_STATE.mgViewTeam = APP_STATE.mgTeam || "A";
+  if (!APP_STATE.mgViewTeam) APP_STATE.mgViewTeam = APP_STATE.mgTeam || MG_TEAM_CODES[0];
   if (APP_STATE.mgMode) {
     refreshMgView();
     // 미션 상세 모달이 열려 있으면 내 인증 영역도 다시 그림
@@ -2170,7 +2226,7 @@ function renderMgRanking() {
   list.innerHTML = "";
 
   var data = APP_STATE.mgData || {};
-  var rows = ["A", "B"].map(function (team) {
+  var rows = MG_TEAM_CODES.map(function (team) {
     var done = (data[team] && data[team].done) || {};
     var checks = 0;
     Object.keys(done).forEach(function (k) { if (done[k] === true) checks++; });
@@ -2183,7 +2239,7 @@ function renderMgRanking() {
     return a.team < b.team ? -1 : 1;
   });
 
-  var medals = ["🥇", "🥈"];
+  var medals = ["🥇", "🥈", "🥉"];
   var prevKey = null, prevRank = 0;
 
   rows.forEach(function (r, i) {
@@ -2200,7 +2256,7 @@ function renderMgRanking() {
 
     var nick = document.createElement("span");
     nick.className = "rank-nick";
-    nick.textContent = r.team + "팀";
+    nick.textContent = mgTeamName(r.team);
 
     var bingo = document.createElement("span");
     bingo.className = "rank-bingo";
@@ -2234,7 +2290,7 @@ function renderMgMyProof(mid) {
   var box = document.getElementById("myProof");
   box.innerHTML = "";
 
-  var team = APP_STATE.mgViewTeam || "A";
+  var team = APP_STATE.mgViewTeam || MG_TEAM_CODES[0];
   var data = (APP_STATE.mgData && APP_STATE.mgData[team]) || { done: {}, mine: {} };
   var sub = data.mine ? data.mine[mid] : null;
   var teamDone = !!(data.done && data.done[mid] === true);
@@ -2242,7 +2298,7 @@ function renderMgMyProof(mid) {
 
   var label = document.createElement("div");
   label.className = "my-proof-label";
-  label.textContent = "내 인증 (" + team + "팀)";
+  label.textContent = "내 인증 (" + mgTeamName(team) + ")";
   box.appendChild(label);
 
   // 팀원이 이미 완료한 칸 안내 (내 유효 인증이 없을 때)
@@ -2540,55 +2596,114 @@ function scrollChatToBottom() {
    웹 푸시 알림 — "알림 켜기" 버튼 / 인앱 공지 배너 / 공지 보내기(관리자)
    ========================================================== */
 
-/** "🔔 알림 켜기" 버튼 표시 여부 갱신 — 지원 && 아직 허용 전일 때만 노출 */
+/** 현재 알림이 "켜짐" 상태인지 (권한 허용됨 && 사용자가 끄지 않음) */
+function isNotifOn(st) {
+  return !!(st && st.permission === "granted" && !st.muted);
+}
+
+/** 이름 옆 알림 버튼 갱신 — 지원되면 항상 노출, 상태에 따라 켜기/끄기 토글 */
 function updateNotifButton() {
   var btn = document.getElementById("btnEnableNotif");
   if (!btn) return;
   var st = (typeof window.fbNotifStatus === "function")
     ? window.fbNotifStatus()
-    : { supported: false, permission: "unsupported" };
-  btn.classList.toggle("hidden", !(st.supported && st.permission !== "granted"));
+    : { supported: false, permission: "unsupported", muted: false };
+  if (!st.supported) { btn.classList.add("hidden"); return; }
+  btn.classList.remove("hidden"); // 켜도 사라지지 않고 계속 남아 토글 역할
+  var on = isNotifOn(st);
+  btn.textContent = on ? "🔕 알림 끄기" : "🔔 알림 켜기";
+  btn.classList.toggle("is-on", on);
 }
 
-/* ---------- 첫 진입 시 알림 권한 요청 ----------
-   앱에 처음 들어오면 브라우저 권한 창을 바로 띄운다.
-   한 번 허용(또는 차단)하면 permission이 "default"가 아니게 되어 다시 뜨지 않는다. */
+/* ---------- 첫 진입 시 알림 안내 팝업 ----------
+   브라우저 권한 창을 바로 띄우지 않고, 먼저 우리 안내 모달로 이유를 설명한다.
+   [확인] → 브라우저 권한 요청, 거기서 거절하거나 [나중에] → 다시 묻지 않음(localStorage). */
 
-/** 처음 들어온 사람에게 브라우저 알림 권한 창 표시 (아직 묻기 전일 때만) */
+function notifPromptDismissed() {
+  try { return localStorage.getItem("notifPromptDismissed") === "1"; } catch (e) { return false; }
+}
+function setNotifPromptDismissed() {
+  try { localStorage.setItem("notifPromptDismissed", "1"); } catch (e) { /* 무시 */ }
+}
+
+/** 처음 들어온 사람에게 알림 안내 모달 표시 (아직 안 물었고 권한 미결정일 때만) */
 function maybeAskNotifPermission() {
   var st = (typeof window.fbNotifStatus === "function")
     ? window.fbNotifStatus()
     : { supported: false, permission: "unsupported" };
   if (!st.supported) return;                 // 지원 안 하는 브라우저/기기
-  if (st.permission !== "default") return;   // 이미 허용/차단한 사람 → 다시 묻지 않음
-  if (typeof window.fbEnableNotifications !== "function") return;
-
-  // 화면이 뜬 직후 권한 창이 겹치지 않도록 살짝 지연 (토스트는 띄우지 않음 — 조용히 처리)
-  window.setTimeout(function () {
-    window.fbEnableNotifications()
-      .then(function (res) {
-        updateNotifButton(); // 허용됐으면 "🔔 알림 켜기" 버튼 숨김, 거절이면 그대로 노출
-        if (res && res.ok) showToast("알림을 켰어요 🔔");
-      })
-      .catch(function (err) { console.warn("알림 권한 요청 실패:", err); });
-  }, 600);
+  if (st.permission !== "default") return;   // 이미 허용/차단 → 다시 묻지 않음
+  if (notifPromptDismissed()) return;        // 이미 "나중에/거절" 한 사람
+  // 화면이 뜬 직후 겹치지 않도록 살짝 지연
+  window.setTimeout(openNotifPrompt, 700);
 }
 
-/** "🔔 알림 켜기" 클릭 — 권한 요청 + FCM 토큰 등록 (firebase.js) */
-function handleEnableNotif() {
-  if (typeof window.fbEnableNotifications !== "function") {
-    showToast("Firebase 모듈을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
-    return;
-  }
+function openNotifPrompt() {
+  var modal = document.getElementById("notifPromptModal");
+  if (modal) modal.classList.remove("hidden");
+}
+function closeNotifPrompt() {
+  var modal = document.getElementById("notifPromptModal");
+  if (modal) modal.classList.add("hidden");
+}
+
+/** 안내 모달 [확인] — 브라우저 권한 요청. 거절하면 다시 묻지 않음 */
+function handleNotifPromptConfirm() {
+  closeNotifPrompt();
+  if (typeof window.fbEnableNotifications !== "function") return;
   showLoading();
   window.fbEnableNotifications()
     .then(function (res) {
       hideLoading();
+      updateNotifButton();
       if (res && res.ok) {
-        updateNotifButton(); // 허용됐으니 버튼 숨김
+        showToast("알림을 켰어요 🔔");
+      } else {
+        setNotifPromptDismissed(); // 거절/실패 → 더는 자동으로 묻지 않음 (버튼으로만)
+      }
+    })
+    .catch(function (err) {
+      hideLoading();
+      setNotifPromptDismissed();
+      console.warn("알림 권한 요청 실패:", err);
+    });
+}
+
+/** 안내 모달 [나중에] — 다시 묻지 않고 닫기 (버튼으로 언제든 켤 수 있음) */
+function handleNotifPromptLater() {
+  setNotifPromptDismissed();
+  closeNotifPrompt();
+}
+
+/** 이름 옆 알림 버튼 클릭 — 상태에 따라 켜기/끄기 토글 */
+function handleEnableNotif() {
+  if (typeof window.fbNotifStatus !== "function") {
+    showToast("Firebase 모듈을 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+    return;
+  }
+  var st = window.fbNotifStatus();
+
+  // 이미 켜져 있으면 → 끄기
+  if (isNotifOn(st)) {
+    showLoading();
+    window.fbDisableNotifications()
+      .then(function () { hideLoading(); updateNotifButton(); showToast("알림을 껐어요 🔕"); })
+      .catch(function () { hideLoading(); updateNotifButton(); showToast("알림을 껐어요 🔕"); });
+    return;
+  }
+
+  // 꺼져 있으면 → 켜기
+  if (typeof window.fbEnableNotifications !== "function") return;
+  showLoading();
+  window.fbEnableNotifications()
+    .then(function (res) {
+      hideLoading();
+      updateNotifButton();
+      if (res && res.ok) {
+        try { localStorage.removeItem("notifPromptDismissed"); } catch (e) {}
         showToast("알림을 켰어요 🔔");
       } else if (res && res.reason === "denied") {
-        showToast("브라우저 알림이 차단돼 있어요. 설정에서 허용해 주세요.");
+        showToast("브라우저 알림이 차단돼 있어요. 휴대폰 설정에서 이 사이트 알림을 허용해 주세요.");
       } else if (res && res.reason === "unsupported") {
         showToast("이 브라우저/기기는 알림을 지원하지 않아요. (아이폰은 홈 화면에 추가 후 사용)");
       } else {

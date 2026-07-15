@@ -998,7 +998,7 @@ body {
   padding: 6px 16px;
   box-shadow: var(--shadow);
 }
-.mg-team-indicator.team-b { color: #d1215a; }
+.mg-team-indicator.team-gender-s { color: #d1215a; }
 
 .mg-team-toggle {
   display: inline-flex;
@@ -1018,26 +1018,27 @@ body {
 }
 .mg-team-toggle button.active { background: #fff; color: var(--blue-deep); }
 
-/* 팀 선택 모달의 큰 A/B 버튼 */
+/* 팀 선택 모달의 큰 팀 버튼 (4팀 → 2×2 배치) */
 .mg-team-pick {
-  display: flex; gap: 12px; justify-content: center;
+  display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
   margin-top: 18px;
 }
 .btn-team {
-  flex: 1; max-width: 140px;
+  flex: 1 1 40%; min-width: 118px; max-width: 160px;
   border: none; border-radius: 16px;
-  padding: 22px 10px;
-  font-family: inherit; font-size: 1.3rem; font-weight: 900;
+  padding: 20px 10px;
+  font-family: inherit; font-size: 1.05rem; font-weight: 900;
   color: #fff;
   cursor: pointer;
   transition: transform 0.1s, opacity 0.15s;
   -webkit-tap-highlight-color: transparent;
+  word-break: keep-all;
 }
 .btn-team:active { transform: scale(0.96); }
-.btn-team-a { background: var(--blue); }
-.btn-team-a:hover { background: var(--blue-deep); }
-.btn-team-b { background: var(--pink); }
-.btn-team-b:hover { background: #e8659a; }
+.btn-team-b { background: var(--blue); }          /* 형제 팀 = 파랑 */
+.btn-team-b:hover { background: var(--blue-deep); }
+.btn-team-s { background: var(--pink); }          /* 자매 팀 = 분홍 */
+.btn-team-s:hover { background: #e8659a; }
 
 /* 미션 모달 — "팀원이 이미 완료" 안내 */
 .mg-team-done-note {
@@ -1054,18 +1055,19 @@ body {
 .btn-grant-mg { background: var(--teal-deep); }
 .btn-grant-mg:hover { background: #23997f; }
 
-.mg-team-mini { display: inline-flex; gap: 3px; }
+.mg-team-mini { display: inline-flex; gap: 3px; flex-wrap: wrap; }
 .btn-team-mini {
-  width: 26px; height: 26px;
+  min-width: 34px; height: 26px; padding: 0 6px;
   border: 1px solid #d3dae5;
   border-radius: 8px;
   background: #fff; color: #8a93a3;
   font-family: inherit; font-size: 0.72rem; font-weight: 900;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
+  word-break: keep-all;
 }
 .btn-team-mini.active { background: var(--blue); border-color: var(--blue); color: #fff; }
-.btn-team-mini.active:last-child { background: var(--pink); border-color: var(--pink); }
+.btn-team-mini.team-gender-s.active { background: var(--pink); border-color: var(--pink); }
 
 /* ==========================================================
    채팅 (청년회 메인, 카카오톡 스타일)
@@ -1177,7 +1179,7 @@ body {
 @media (prefers-color-scheme: dark) {
   .btn-mg-enter { background: var(--blue); color: #fff; }
   .mg-team-indicator { background: rgba(30, 38, 52, 0.92); color: #9db8ee; }
-  .mg-team-indicator.team-b { color: #f48fb6; }
+  .mg-team-indicator.team-gender-s { color: #f48fb6; }
   .mg-team-done-note { background: #24402a; color: #9be08f; }
   .btn-team-mini { background: #2b3342; border-color: #3d4757; color: #8f9bb0; }
   .chat-msg.other .chat-bubble { background: #2b3342; color: #e5e9f0; }
@@ -1213,6 +1215,14 @@ body {
   font-weight: 800;
 }
 .btn-notif:hover { background: #ffe27a; }
+/* 알림이 켜진 상태(끄기 토글) — 켜져 있음을 나타내는 차분한 톤 */
+.btn-notif.is-on {
+  background: rgba(255,255,255,0.22);
+  border-color: rgba(255,255,255,0.45);
+  color: #fff;
+  font-weight: 700;
+}
+.btn-notif.is-on:hover { background: rgba(255,255,255,0.32); }
 
 /* 인앱 공지 배너 — 앱이 열려 있을 때 푸시 수신 시 화면 상단 고정 */
 .announce-banner {

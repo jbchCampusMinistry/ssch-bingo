@@ -88,11 +88,18 @@ let emitTimer = null;        // 제출 갱신 디바운스
 let missionDoneUnsub = null; // 미션별 완료 인원 인덱스(missionDone) 리스너 해제 함수
 let myDoneCache = null;      // { mid: true } 내 완료 플래그 마지막 동기화 상태 (null = 이번 세션 아직 동기화 전)
 
-/* ---------- 중고등부(팀 빙고) 상태 ---------- */
+/* ---------- 중고등부(팀 빙고) 상태 ----------
+   팀 4개: mb(중등부 형제) / hb(고등부 형제) / ms(중등부 자매) / hs(고등부 자매) */
+const MG_TEAM_CODES = ["mb", "hb", "ms", "hs"];
+const MG_TEAM_NAMES = { mb: "중등부 형제", hb: "고등부 형제", ms: "중등부 자매", hs: "고등부 자매" };
+const isMgTeamCode = (t) => MG_TEAM_CODES.indexOf(t) !== -1;
+const mgTeamName = (t) => MG_TEAM_NAMES[t] || t || "";
+/** 팀별 초기 캐시 { mb:null, hb:null, ... } 생성 */
+const emptyMgCache = () => MG_TEAM_CODES.reduce((o, t) => { o[t] = null; return o; }, {});
 let currentMgRole = false;            // 내 중고등부 권한 (mgRoles/$uid)
-let currentMgTeam = null;             // 내 소속 팀 "A"|"B" (mgTeams/$uid)
-let mgBoardUnsubs = [];               // A/B 두 팀 보드 리스너 해제 함수들
-let mgBoardCache = { A: null, B: null }; // 팀별 mgSubmissions 스냅샷 캐시
+let currentMgTeam = null;             // 내 소속 팀 코드 (mgTeams/$uid)
+let mgBoardUnsubs = [];               // 팀별 보드 리스너 해제 함수들
+let mgBoardCache = emptyMgCache();    // 팀별 mgSubmissions 스냅샷 캐시
 let mgGalleryUnsub = null;            // 중고등부 갤러리 리스너 해제 함수
 let mgGalleryKey = null;              // "팀/미션번호" (뒤늦은 응답 무시용)
 
@@ -243,7 +250,9 @@ async function enterMain() {
 
   // 이미 알림을 허용한 사용자는 백그라운드에서 FCM 토큰만 조용히 갱신
   // (재방문 시 토큰이 만료돼도 버튼을 다시 누를 필요가 없도록 — 프롬프트는 띄우지 않음!)
-  if (messaging && typeof Notification !== "undefined" && Notification.permission === "granted") {
+  // ※ 사용자가 직접 "알림 끄기"를 한 경우(notifMuted)엔 토큰을 다시 등록하지 않는다.
+  if (messaging && typeof Notification !== "undefined" && Notification.permission === "granted"
+      && !isNotifMuted()) {
     registerFcmToken().catch(function (e) { console.warn("FCM 토큰 갱신 실패(무시):", e); });
   }
 }
@@ -257,7 +266,9 @@ async function refreshMgState() {
   } catch (e) { currentMgRole = false; }
   try {
     const teamSnap = await get(ref(db, "mgTeams/" + currentUser.uid));
-    currentMgTeam = teamSnap.exists() ? teamSnap.val() : null;
+    const t = teamSnap.exists() ? teamSnap.val() : null;
+    // 옛 A/B 등 유효하지 않은 팀 코드는 미선택으로 취급 → 4팀 중 다시 선택하게
+    currentMgTeam = isMgTeamCode(t) ? t : null;
   } catch (e) { currentMgTeam = null; }
 }
 
@@ -362,7 +373,7 @@ window.fbRenameNickname = async function (nick) {
     } catch (e) { console.warn("인증샷 닉네임 동기화 실패(mid=" + mid + "):", e); }
   }
 
-  for (const team of ["A", "B"]) { // 중고등부 인증샷 메타 (사진은 안 읽음 — 가벼움)
+  for (const team of MG_TEAM_CODES) { // 중고등부 인증샷 메타 (사진은 안 읽음 — 가벼움)
     try {
       const metaSnap = await get(ref(db, "mgSubmissions/" + team));
       if (!metaSnap.exists()) continue;
@@ -827,7 +838,7 @@ window.fbWatchUsers = function () {
           email: u.email || "",
           isAdmin: u.isAdmin === true,
           mgRole: u.mgRole === true,
-          mgTeam: u.mgTeam === "A" || u.mgTeam === "B" ? u.mgTeam : ""
+          mgTeam: isMgTeamCode(u.mgTeam) ? u.mgTeam : ""
         });
       });
     }
@@ -902,7 +913,7 @@ window.fbPurgeRevokedPhotos = async function () {
   }
 
   // 중고등부 — mgSubmissions(메타) / mgPhotos(사진) / mgOrigs(원본 경로)
-  for (const team of ["A", "B"]) {
+  for (const team of MG_TEAM_CODES) {
     const [metaSnap, ogSnap] = await Promise.all([
       get(ref(db, "mgSubmissions/" + team)).catch(() => null),
       get(ref(db, "mgOrigs/" + team)).catch(() => null)
@@ -941,23 +952,24 @@ window.fbAdminLoadAllPhotos = async function () {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
   // 각 읽기를 개별 catch — 규칙 미배포 등으로 일부 노드를 못 읽어도
   // 나머지(예: 청년회 사진)는 정상적으로 불러오도록 (전체 실패 방지)
-  const [subSnap, metaA, metaB, phA, phB, ogA, ogB] = await Promise.all([
-    get(ref(db, "submissions")).catch(() => null),
-    get(ref(db, "mgSubmissions/A")).catch(() => null),
-    get(ref(db, "mgSubmissions/B")).catch(() => null),
-    get(ref(db, "mgPhotos/A")).catch(() => null),
-    get(ref(db, "mgPhotos/B")).catch(() => null),
-    get(ref(db, "mgOrigs/A")).catch(() => null),
-    get(ref(db, "mgOrigs/B")).catch(() => null)
-  ]);
   const ok = (snap) => snap && snap.exists();
+  // 청년회 submissions + 각 팀의 mgSubmissions/mgPhotos/mgOrigs 를 한 번에 읽기
+  const [subSnap, teamSnaps] = await Promise.all([
+    get(ref(db, "submissions")).catch(() => null),
+    Promise.all(MG_TEAM_CODES.map((team) => Promise.all([
+      get(ref(db, "mgSubmissions/" + team)).catch(() => null),
+      get(ref(db, "mgPhotos/" + team)).catch(() => null),
+      get(ref(db, "mgOrigs/" + team)).catch(() => null)
+    ])))
+  ]);
   const subs = ok(subSnap) ? subSnap.val() : {};
-  const mgMeta = { A: ok(metaA) ? metaA.val() : {}, B: ok(metaB) ? metaB.val() : {} };
-  const mgPh = { A: ok(phA) ? phA.val() : {}, B: ok(phB) ? phB.val() : {} };
-  const mgOg = {
-    A: ogA && ogA.exists() ? ogA.val() : {},
-    B: ogB && ogB.exists() ? ogB.val() : {}
-  };
+  const mgMeta = {}, mgPh = {}, mgOg = {};
+  MG_TEAM_CODES.forEach((team, i) => {
+    const [metaSnap, phSnap, ogSnap] = teamSnaps[i];
+    mgMeta[team] = ok(metaSnap) ? metaSnap.val() : {};
+    mgPh[team] = ok(phSnap) ? phSnap.val() : {};
+    mgOg[team] = ok(ogSnap) ? ogSnap.val() : {};
+  });
 
   const missions = [];
   for (let mid = 0; mid < 25; mid++) {
@@ -979,10 +991,10 @@ window.fbAdminLoadAllPhotos = async function () {
         revoked: s.revoked === true
       });
     });
-    groups.push({ source: "청년회", entries: yEntries });
+    groups.push({ source: "청년회", scope: "yc", entries: yEntries });
 
-    // 중고등부 A/B팀
-    ["A", "B"].forEach((team) => {
+    // 중고등부 4팀
+    MG_TEAM_CODES.forEach((team) => {
       const entries = [];
       const metas = (mgMeta[team] && mgMeta[team][mid]) || {};
       const photosNode = (mgPh[team] && mgPh[team][mid]) || {};
@@ -999,7 +1011,7 @@ window.fbAdminLoadAllPhotos = async function () {
           revoked: m.revoked === true
         });
       });
-      groups.push({ source: "중고등부 " + team + "팀", entries: entries });
+      groups.push({ source: "중고등부 " + mgTeamName(team), scope: team, entries: entries });
     });
 
     missions.push({
@@ -1026,7 +1038,7 @@ window.fbFetchOriginalBlob = async function (path) {
    window로 노출: 관리자 — 사진 하드 삭제 / 계정 삭제
    ========================================================== */
 
-/** 관리자: 회원의 인증샷 1장 완전 삭제 — scope: "yc"(청년회) | "A" | "B"(중고등부 팀)
+/** 관리자: 회원의 인증샷 1장 완전 삭제 — scope: "yc"(청년회) | 팀 코드(mb/hb/ms/hs)
     RTDB의 참조(사진·경로)를 먼저 제거한 뒤, Storage 원본은 백그라운드로 삭제(best-effort).
     ※ Storage 규칙이 "로그인 사용자 삭제 허용"이면 원본도 함께 지워짐. */
 window.fbAdminDeletePhoto = async function (scope, mid, uid, index) {
@@ -1058,7 +1070,7 @@ window.fbAdminDeletePhoto = async function (scope, mid, uid, index) {
     return;
   }
 
-  // 중고등부 — scope 가 곧 팀("A" | "B")
+  // 중고등부 — scope 가 곧 팀 코드(mb/hb/ms/hs)
   const team = scope;
   const pr = ref(db, "mgPhotos/" + team + "/" + mid + "/" + uid);
   const or = ref(db, "mgOrigs/" + team + "/" + mid + "/" + uid);
@@ -1116,7 +1128,7 @@ window.fbAdminDeleteUser = async function (uid) {
     updates["submissions/" + mid + "/" + uid] = null;
     updates["missionDone/" + mid + "/" + uid] = null; // 완료 인원 인덱스도 함께 정리
   }
-  ["A", "B"].forEach((team) => {
+  MG_TEAM_CODES.forEach((team) => {
     for (let mid = 0; mid < 25; mid++) {
       updates["mgSubmissions/" + team + "/" + mid + "/" + uid] = null;
       updates["mgPhotos/" + team + "/" + mid + "/" + uid] = null;
@@ -1165,7 +1177,7 @@ window.fbMgEnter = async function () {
 /** 내 팀 최초 선택 — 보안규칙상 최초 1회만 성공 (이후엔 관리자만 변경 가능) */
 window.fbMgSetMyTeam = async function (team) {
   if (!currentUser) throw new Error("로그인이 필요해요.");
-  if (team !== "A" && team !== "B") throw new Error("잘못된 팀이에요.");
+  if (!isMgTeamCode(team)) throw new Error("잘못된 팀이에요.");
   await set(ref(db, "mgTeams/" + currentUser.uid), team);
   try {
     await update(ref(db, "users/" + currentUser.uid), { mgTeam: team }); // 표시용 미러
@@ -1180,12 +1192,12 @@ window.fbMgSetMyTeam = async function (team) {
 /** A·B 두 팀의 mgSubmissions를 구독 → window.onMgData({A:{done,counts,mine}, B:{...}}, 내팀) */
 window.fbMgWatchBoard = function () {
   window.fbMgUnwatchBoard();
-  ["A", "B"].forEach((team) => {
+  MG_TEAM_CODES.forEach((team) => {
     const unsub = onValue(ref(db, "mgSubmissions/" + team), (snap) => {
       mgBoardCache[team] = snap.exists() ? snap.val() : {};
       emitMgData();
     }, (err) => {
-      console.warn("중고등부 보드 구독 오류(" + team + "팀):", err);
+      console.warn("중고등부 보드 구독 오류(" + team + "):", err);
     });
     mgBoardUnsubs.push(unsub);
   });
@@ -1194,14 +1206,14 @@ window.fbMgWatchBoard = function () {
 window.fbMgUnwatchBoard = function () {
   mgBoardUnsubs.forEach((fn) => { try { fn(); } catch (e) {} });
   mgBoardUnsubs = [];
-  mgBoardCache = { A: null, B: null };
+  mgBoardCache = emptyMgCache();
 };
 
 /** 두 팀 캐시가 모두 준비되면 완료 맵/인원수/내 제출 메타를 계산해 app.js로 전달 */
 function emitMgData() {
-  if (mgBoardCache.A === null || mgBoardCache.B === null) return; // 둘 다 도착 후 렌더
+  if (MG_TEAM_CODES.some((t) => mgBoardCache[t] === null)) return; // 모든 팀 캐시 도착 후 렌더
   const out = {};
-  ["A", "B"].forEach((team) => {
+  MG_TEAM_CODES.forEach((team) => {
     const raw = mgBoardCache[team] || {};
     const done = {};   // { mid: true } — 유효 제출이 1명이라도 있으면 완료
     const counts = {}; // { mid: 유효 제출 인원수 }
@@ -1447,7 +1459,7 @@ window.fbSetMgRole = async function (uid, on) {
 /** 관리자의 팀 변경 (멤버 본인은 최초 1회만, 관리자는 언제든) */
 window.fbAdminSetMgTeam = async function (uid, team) {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
-  if (team !== "A" && team !== "B") throw new Error("잘못된 팀이에요.");
+  if (!isMgTeamCode(team)) throw new Error("잘못된 팀이에요.");
   await set(ref(db, "mgTeams/" + uid), team);
   await update(ref(db, "users/" + uid), { mgTeam: team });
   if (currentUser.uid === uid) currentMgTeam = team;
@@ -1513,15 +1525,21 @@ async function registerFcmToken() {
   return true;
 }
 
-/** 알림 지원/권한 상태 — app.js가 "알림 켜기" 버튼 표시 여부 판단에 사용 */
+/** 사용자가 직접 "알림 끄기"를 눌러 이 기기 알림을 음소거했는지 */
+function isNotifMuted() {
+  try { return localStorage.getItem("notifMuted") === "1"; } catch (e) { return false; }
+}
+
+/** 알림 지원/권한/음소거 상태 — app.js가 "알림 켜기/끄기" 버튼 판단에 사용 */
 window.fbNotifStatus = function () {
   return {
     supported: !!messaging,
-    permission: (typeof Notification !== "undefined" ? Notification.permission : "unsupported")
+    permission: (typeof Notification !== "undefined" ? Notification.permission : "unsupported"),
+    muted: isNotifMuted()
   };
 };
 
-/** 알림 켜기 — 권한 요청 → 토큰 발급 → DB 등록. 결과는 { ok, reason? } */
+/** 알림 켜기 — 권한 요청 → 토큰 발급 → DB 등록 + 음소거 해제. 결과는 { ok, reason? } */
 window.fbEnableNotifications = async function () {
   try {
     if (!messaging) return { ok: false, reason: "unsupported" };
@@ -1530,10 +1548,28 @@ window.fbEnableNotifications = async function () {
     if (perm !== "granted") return { ok: false, reason: "denied" };
     const saved = await registerFcmToken();
     if (!saved) return { ok: false, reason: "no-token" };
+    try { localStorage.removeItem("notifMuted"); } catch (e) { /* 무시 */ }
     return { ok: true };
   } catch (e) {
     console.warn("알림 설정 실패:", e);
     return { ok: false, reason: "error" };
+  }
+};
+
+/** 알림 끄기 — 이 기기 토큰을 fcmTokens에서 제거하고 음소거 플래그 저장.
+    (브라우저 권한 자체는 못 끄므로, 서버가 이 기기로 안 보내도록 토큰만 제거) */
+window.fbDisableNotifications = async function () {
+  try { localStorage.setItem("notifMuted", "1"); } catch (e) { /* 무시 */ }
+  try {
+    if (messaging && currentUser) {
+      const reg = await navigator.serviceWorker.ready;
+      const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+      if (token) await remove(ref(db, "fcmTokens/" + currentUser.uid + "/" + token));
+    }
+    return { ok: true };
+  } catch (e) {
+    console.warn("알림 끄기 실패:", e);
+    return { ok: false }; // 음소거 플래그는 이미 저장됨 → 재접속 시 재등록은 막힘
   }
 };
 
