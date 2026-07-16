@@ -184,6 +184,16 @@ function initApp() {
   // 서비스워커 등록 (지원 브라우저 + http(s) 환경에서만)
   // updateViaCache:"none" → SW 스크립트를 항상 새로 받아 업데이트가 확실히 반영됨
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
+    // 새 버전이 설치되면 화면을 한 번 새로고침해 새 코드로 갈아탄다
+    // (예전에는 앱을 껐다 켜도 옛 화면이 그대로여서 업데이트가 안 된 것처럼 보였음)
+    var hadController = !!navigator.serviceWorker.controller; // 첫 설치면 새로고침 불필요
+    var swReloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (!hadController || swReloading) return;
+      swReloading = true;
+      location.reload();
+    });
+
     navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" })
       .then(function (reg) { try { reg.update(); } catch (e) {} }) // 방문 시마다 업데이트 확인
       .catch(function (err) { console.warn("서비스워커 등록 실패:", err); });

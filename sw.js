@@ -48,7 +48,7 @@ self.addEventListener("notificationclick", function (e) {
   }));
 });
 
-const CACHE_NAME = "haggye-bingo-shell-v5"; // firebase importScripts 제거(순수 push) → 새 SW 활성화
+const CACHE_NAME = "haggye-bingo-shell-v6"; // 앱 셸을 HTTP 캐시 무시하고 받도록 변경 → 새 SW 활성화
 
 /* 미리 캐시할 앱 셸 */
 const SHELL_ASSETS = [
@@ -123,10 +123,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 같은 출처(앱 셸): network-first → 실패 시 캐시 폴백
+  // 같은 출처(앱 셸): network-first(HTTP 캐시 무시) → 실패 시 캐시 폴백
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(req)
+      fetchFresh(req)
         .then((res) => {
           if (res && res.ok) {
             const copy = res.clone();
@@ -135,7 +135,8 @@ self.addEventListener("fetch", (event) => {
           return res;
         })
         .catch(() =>
-          caches.match(req).then((cached) => {
+          // 오프라인 폴백 — ?v= 같은 쿼리가 붙어도 찾을 수 있게 ignoreSearch
+          caches.match(req, { ignoreSearch: true }).then((cached) => {
             if (cached) return cached;
             // 오프라인에서 페이지 이동 시 index.html 폴백
             if (req.mode === "navigate") return caches.match("./index.html");
@@ -145,3 +146,17 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
+
+/* 앱 셸을 항상 서버에서 새로 받아온다.
+   그냥 fetch(req)를 쓰면 브라우저 HTTP 캐시(GitHub Pages는 10분 캐시)가 예전 파일을 돌려줘
+   폰에서 앱을 껐다 켜도 업데이트가 안 되던 원인이 됐다.
+   cache:"reload" = HTTP 캐시를 건너뛰고 네트워크에서 받은 뒤 캐시를 갱신.
+   (지원하지 않는 옛 브라우저에서는 일반 fetch로 물러난다) */
+function fetchFresh(req) {
+  try {
+    // navigate 모드 요청은 Request로 다시 만들 수 없어 URL 문자열로 새 요청을 만든다
+    return fetch(req.url, { cache: "reload", credentials: "same-origin" });
+  } catch (e) {
+    return fetch(req);
+  }
+}

@@ -17,7 +17,7 @@
 
   <!-- Pretendard 폰트 (허용된 유일한 외부 폰트) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.css">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=6">
 </head>
 <body onload="initApp()">
 
@@ -455,7 +455,7 @@
   <div id="loading" class="loading-overlay hidden"><div class="spinner"></div></div>
 
   <!-- app.js(일반 스크립트) → firebase.js(ES 모듈) 순서로 로드 -->
-  <script src="./app.js"></script>
-  <script type="module" src="./firebase.js"></script>
+  <script src="./app.js?v=6"></script>
+  <script type="module" src="./firebase.js?v=6"></script>
 </body>
 </html>
