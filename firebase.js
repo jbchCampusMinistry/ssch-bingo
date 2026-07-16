@@ -87,6 +87,8 @@ let lbReady = false;         // 내 기존 leaderboard 값을 읽었는지
 let emitTimer = null;        // 제출 갱신 디바운스
 let missionDoneUnsub = null; // 미션별 완료 인원 인덱스(missionDone) 리스너 해제 함수
 let myDoneCache = null;      // { mid: true } 내 완료 플래그 마지막 동기화 상태 (null = 이번 세션 아직 동기화 전)
+let nickResetUnsub = null;   // 관리자의 닉네임 재설정 요청(users/$uid/nickReset) 리스너 해제 함수
+let nickResetPrompted = false; // 이번 세션에서 재설정 안내 모달을 이미 띄웠는지 (중복 표시 방지)
 
 /* ---------- 중고등부(팀 빙고) 상태 ----------
    팀 4개: mb(중등부 형제) / hb(고등부 형제) / ms(중등부 자매) / hs(고등부 자매) */
@@ -245,6 +247,7 @@ async function enterMain() {
   subscribeMySubmissions();
   subscribeLeaderboard();
   subscribeMissionCounts(); // 미션별 완료 인원수(보드 배지) 실시간 구독
+  subscribeNickReset(); // 관리자의 닉네임 재설정 요청 실시간 감시
   window.fbChatWatch(); // 청년회 메인 채팅 실시간 구독 시작
   window.fbWatchAnnouncements(); // 공지 게시판 실시간 구독 시작
 
@@ -361,7 +364,16 @@ window.fbRenameNickname = async function (nick) {
   }
   currentNick = nick;
 
-  // 3) 이미 저장된 곳의 표시 이름 동기화 (없는 노드를 새로 만들지 않도록 있는 것만)
+  // 3) 이미 저장된 곳의 표시 이름 동기화
+  await syncDisplayNickname(nick);
+
+  // 4) 화면의 내 이름만 갱신 (구독을 다시 걸지 않도록 enterMain은 호출하지 않음)
+  if (typeof window.onNickRenamed === "function") window.onNickRenamed(nick);
+};
+
+/** 순위표·인증샷 등 표시용으로 복사돼 있는 내 닉네임을 새 이름으로 맞춰 준다.
+    (없는 노드를 새로 만들지 않도록 이미 있는 것만 갱신) — 닉네임 변경/재설정 공용 */
+async function syncDisplayNickname(nick) {
   try {
     const lbSnap = await get(ref(db, "leaderboard/" + currentUser.uid));
     if (lbSnap.exists()) await update(ref(db, "leaderboard/" + currentUser.uid), { nick: nick });
@@ -384,8 +396,79 @@ window.fbRenameNickname = async function (nick) {
       }
     } catch (e) { console.warn("중고등부 닉네임 동기화 실패(" + team + "):", e); }
   }
+}
 
-  // 4) 화면의 내 이름만 갱신 (구독을 다시 걸지 않도록 enterMain은 호출하지 않음)
+/* ==========================================================
+   닉네임 재설정 요청 (관리자 → 회원)
+   관리자가 users/$uid.nickReset = true 로 요청을 남기면,
+   대상 회원은 접속 중이면 실시간으로, 오프라인이면 다음 접속 때
+   안내 모달을 보고 [확인] 후 새 닉네임을 다시 설정한다.
+   ========================================================== */
+
+/** 관리자: 대상 회원에게 닉네임 재설정 요청 보내기 */
+window.fbRequestNickReset = async function (uid) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  await update(ref(db, "users/" + uid), { nickReset: true });
+};
+
+/** 관리자: 보낸 닉네임 재설정 요청 취소 */
+window.fbCancelNickReset = async function (uid) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  await remove(ref(db, "users/" + uid + "/nickReset"));
+};
+
+/** 내 프로필의 nickReset 플래그를 실시간 감시 — true가 되면 안내 모달 표시 */
+function subscribeNickReset() {
+  if (nickResetUnsub) { try { nickResetUnsub(); } catch (e) {} nickResetUnsub = null; }
+  if (!currentUser) return;
+  nickResetUnsub = onValue(ref(db, "users/" + currentUser.uid + "/nickReset"), (snap) => {
+    const requested = snap.exists() && snap.val() === true;
+    if (requested) {
+      if (nickResetPrompted) return; // 이미 이번 세션에 안내함 — 중복 표시 방지
+      nickResetPrompted = true;
+      if (typeof window.showNickResetPrompt === "function") window.showNickResetPrompt();
+    } else {
+      // 요청이 해제됨(관리자 취소 or 재설정 완료) → 다시 오면 또 안내할 수 있도록 초기화
+      nickResetPrompted = false;
+    }
+  }, (err) => { console.warn("닉네임 재설정 요청 구독 오류:", err); });
+}
+
+/** 회원 본인: 관리자 요청에 따라 닉네임을 다시 설정
+    (중복 검사 → 예약 → 프로필 갱신 → 옛 이름 해제 → 표시 이름 동기화 → 요청 플래그 해제) */
+window.fbResetNickname = async function (nick) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  const oldNick = currentNick;
+
+  if (nick !== oldNick) {
+    // 1) 중복 검사 + 예약 (보안규칙이 경쟁 상황도 차단)
+    const nickRef = ref(db, "nicknames/" + nick);
+    const snap = await get(nickRef);
+    if (snap.exists() && snap.val() !== currentUser.uid) {
+      throw new Error("이미 사용 중인 닉네임이에요. 다른 이름을 입력해 주세요.");
+    }
+    try {
+      await set(nickRef, currentUser.uid);
+    } catch (e) {
+      throw new Error("이미 사용 중인 닉네임이에요. 다른 이름을 입력해 주세요.");
+    }
+
+    // 2) 내 프로필 갱신 → 예전 이름 예약 해제
+    await update(ref(db, "users/" + currentUser.uid), { nick: nick });
+    if (oldNick) {
+      try { await remove(ref(db, "nicknames/" + oldNick)); } catch (e) { /* 남아도 무해 */ }
+    }
+    currentNick = nick;
+
+    // 3) 표시용으로 복사돼 있는 이름 동기화
+    await syncDisplayNickname(nick);
+  }
+
+  // 4) 재설정 요청 플래그 해제 (같은 이름으로 다시 확정한 경우에도 반드시 해제)
+  try { await remove(ref(db, "users/" + currentUser.uid + "/nickReset")); } catch (e) { /* 무시 */ }
+  nickResetPrompted = false;
+
+  // 5) 화면의 내 이름만 갱신 (구독을 다시 걸지 않도록 enterMain은 호출하지 않음)
   if (typeof window.onNickRenamed === "function") window.onNickRenamed(nick);
 };
 
@@ -838,7 +921,8 @@ window.fbWatchUsers = function () {
           email: u.email || "",
           isAdmin: u.isAdmin === true,
           mgRole: u.mgRole === true,
-          mgTeam: isMgTeamCode(u.mgTeam) ? u.mgTeam : ""
+          mgTeam: isMgTeamCode(u.mgTeam) ? u.mgTeam : "",
+          nickReset: u.nickReset === true
         });
       });
     }
@@ -1645,6 +1729,8 @@ function cleanupSubscriptions() {
   window.fbUnwatchAnnouncements();
   if (lbUnsub) { try { lbUnsub(); } catch (e) {} lbUnsub = null; }
   if (missionDoneUnsub) { try { missionDoneUnsub(); } catch (e) {} missionDoneUnsub = null; }
+  if (nickResetUnsub) { try { nickResetUnsub(); } catch (e) {} nickResetUnsub = null; }
+  nickResetPrompted = false;
   myDoneCache = null;
   mySubs = {};
   lastLBKey = null;

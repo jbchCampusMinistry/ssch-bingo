@@ -439,10 +439,14 @@ window.showMain = function (user, nick, isAdmin) {
 /** 닉네임 모달이 "변경" 모드인지 (관리자가 관리자 패널에서 연 경우) */
 var _nickRenameMode = false;
 
+/** 닉네임 모달이 "재설정" 모드인지 (관리자 요청에 따라 회원 본인이 다시 설정) */
+var _nickResetMode = false;
+
 /** 닉네임 설정 모달 표시 (첫 로그인) */
 window.showNickModal = function () {
   hideLoading();
   _nickRenameMode = false;
+  _nickResetMode = false;
   document.getElementById("nickTitle").textContent = "닉네임 설정";
   document.getElementById("nickDesc").textContent = "자기 이름으로 입력해 주세요";
   document.getElementById("nickCancelBtn").classList.add("hidden");
@@ -457,6 +461,7 @@ function openNickRename() {
   if (!APP_STATE.isAdmin) return;
   closeAdminPanel(); // 모달이 겹치지 않도록 관리자 패널은 닫고 연다
   _nickRenameMode = true;
+  _nickResetMode = false;
   document.getElementById("nickTitle").textContent = "닉네임 변경";
   document.getElementById("nickDesc").textContent = "관리자는 닉네임을 언제든 바꿀 수 있어요.";
   document.getElementById("nickCancelBtn").classList.remove("hidden");
@@ -469,6 +474,38 @@ function openNickRename() {
 function closeNickModal() {
   document.getElementById("nickModal").classList.add("hidden");
   _nickRenameMode = false;
+  _nickResetMode = false;
+}
+
+/* ---------- 닉네임 재설정 요청 (관리자 → 회원) ----------
+   관리자가 요청을 보내면 firebase.js의 실시간 감시가 showNickResetPrompt를 호출한다. */
+
+/** 관리자 요청 안내 모달 표시 — [확인] 누르면 닉네임 입력 모달로 이어진다 */
+window.showNickResetPrompt = function () {
+  // 다른 모달(닉네임 입력 등)이 열려 있으면 겹치지 않게 정리
+  document.getElementById("nickModal").classList.add("hidden");
+  document.getElementById("nickResetModal").classList.remove("hidden");
+};
+
+/** 안내 모달의 [나중에] — 이번엔 넘어가고 모달만 닫음.
+    요청 플래그(nickReset)는 그대로 남아 다음 접속 때 다시 안내된다. */
+function handleNickResetLater() {
+  document.getElementById("nickResetModal").classList.add("hidden");
+  showToast("닉네임은 나중에 다시 설정할 수 있어요. 다음 접속 때 안내할게요.");
+}
+
+/** 안내 모달의 [확인] — 닉네임 입력 모달을 재설정 모드로 연다 */
+function handleNickResetConfirm() {
+  document.getElementById("nickResetModal").classList.add("hidden");
+  _nickRenameMode = false;
+  _nickResetMode = true;
+  document.getElementById("nickTitle").textContent = "닉네임 재설정";
+  document.getElementById("nickDesc").textContent = "새로 사용할 닉네임을 입력해 주세요.";
+  document.getElementById("nickCancelBtn").classList.add("hidden"); // 반드시 다시 설정해야 함
+  document.getElementById("nickError").classList.add("hidden");
+  document.getElementById("nickInput").value = "";
+  document.getElementById("nickModal").classList.remove("hidden");
+  setTimeout(function () { document.getElementById("nickInput").focus(); }, 100);
 }
 
 /** 닉네임 변경 완료 — 헤더 이름만 갱신 (firebase.js가 호출) */
@@ -747,6 +784,24 @@ function handleSaveNick() {
     return;
   }
   errEl.classList.add("hidden");
+
+  // 재설정 모드(관리자 요청) — 저장 후 모달만 닫음. 메인 화면은 그대로 유지.
+  if (_nickResetMode) {
+    if (typeof window.fbResetNickname !== "function") return;
+    showLoading();
+    window.fbResetNickname(nick)
+      .then(function () {
+        hideLoading();
+        closeNickModal();
+        showToast("닉네임을 “" + nick + "”(으)로 다시 설정했어요.");
+      })
+      .catch(function (err) {
+        hideLoading();
+        errEl.textContent = err && err.message ? err.message : "닉네임 재설정에 실패했어요.";
+        errEl.classList.remove("hidden");
+      });
+    return;
+  }
 
   // 변경 모드(관리자) — 저장 후 모달만 닫음. 첫 로그인은 저장 후 메인 화면으로 진입.
   if (_nickRenameMode) {
@@ -1297,6 +1352,28 @@ window.renderAdminUsers = function (list) {
     })(u.uid, displayNick));
     actions.appendChild(missionBtn);
 
+    // 닉네임 재설정 요청 — 잘못 지은 닉네임을 회원 본인이 다시 설정하도록 요청
+    // (닉네임을 아직 정한 회원에게만, 나 자신 제외)
+    if (!isMe && u.nick) {
+      var nrBtn = document.createElement("button");
+      nrBtn.type = "button";
+      if (u.nickReset) {
+        // 이미 요청을 보낸 상태 — 취소 버튼으로 표시
+        nrBtn.className = "btn-grant btn-grant-off";
+        nrBtn.textContent = "✏️ 재설정 요청됨 (취소)";
+        nrBtn.addEventListener("click", (function (uid, nick) {
+          return function () { handleAdminCancelNickReset(uid, nick); };
+        })(u.uid, displayNick));
+      } else {
+        nrBtn.className = "btn-grant btn-grant-nick";
+        nrBtn.textContent = "✏️ 닉네임 재설정 요청";
+        nrBtn.addEventListener("click", (function (uid, nick) {
+          return function () { handleAdminRequestNickReset(uid, nick); };
+        })(u.uid, displayNick));
+      }
+      actions.appendChild(nrBtn);
+    }
+
     // 관리자 지정/해제 (마스터는 고정)
     if (!isMaster) {
       if (u.isAdmin) {
@@ -1434,6 +1511,42 @@ function handleToggleAdmin(uid, nick, makeAdmin) {
       hideLoading();
       console.warn("관리자 권한 변경 실패:", err);
       showToast("권한 변경에 실패했어요. 보안 규칙이 최신인지 확인해 주세요.");
+    });
+}
+
+/** 닉네임 재설정 요청 — 대상 회원이 접속 중이면 실시간으로 안내 모달이 뜨고,
+    오프라인이면 다음 접속 때 떠서 새 닉네임을 다시 정하게 된다. */
+function handleAdminRequestNickReset(uid, nick) {
+  if (!confirm("“" + nick + "” 님에게 닉네임 재설정을 요청할까요?\n요청을 받으면 안내 후 새 닉네임을 다시 정하게 돼요.")) return;
+  if (typeof window.fbRequestNickReset !== "function") return;
+
+  showLoading();
+  window.fbRequestNickReset(uid)
+    .then(function () {
+      hideLoading();
+      showToast(nick + " 님에게 닉네임 재설정을 요청했어요."); // 목록은 fbWatchUsers 구독이 자동 갱신
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("닉네임 재설정 요청 실패:", err);
+      showToast((err && err.message) || "요청에 실패했어요.");
+    });
+}
+
+/** 보낸 닉네임 재설정 요청 취소 */
+function handleAdminCancelNickReset(uid, nick) {
+  if (typeof window.fbCancelNickReset !== "function") return;
+
+  showLoading();
+  window.fbCancelNickReset(uid)
+    .then(function () {
+      hideLoading();
+      showToast(nick + " 님에게 보낸 재설정 요청을 취소했어요.");
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("닉네임 재설정 요청 취소 실패:", err);
+      showToast((err && err.message) || "취소에 실패했어요.");
     });
 }
 

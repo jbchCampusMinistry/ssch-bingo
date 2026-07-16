@@ -658,6 +658,8 @@ body {
 .btn-grant-off:hover { background: #e2e6ea; }
 .btn-grant-danger { background: var(--red); }
 .btn-grant-danger:hover { background: #c93b40; }
+.btn-grant-nick { background: #7a5cc7; }
+.btn-grant-nick:hover { background: #6a4cb5; }
 
 .badge-admin {
   background: var(--yellow); color: var(--navy);

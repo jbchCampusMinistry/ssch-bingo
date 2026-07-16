@@ -206,6 +206,20 @@
   </div>
 
   <!-- ============================================ -->
+  <!-- 닉네임 재설정 요청 안내 (관리자 → 회원)          -->
+  <!-- ============================================ -->
+  <div id="nickResetModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 class="modal-title">✏️ 닉네임 재설정 요청</h2>
+      <p class="modal-desc">관리자가 닉네임 재설정을 요청했어요.<br>확인을 누르면 새 닉네임을 다시 정할 수 있어요.</p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="handleNickResetConfirm()">확인</button>
+        <button class="btn btn-ghost" onclick="handleNickResetLater()">나중에</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
   <!-- 미션 상세 모달                                 -->
   <!-- ============================================ -->
   <div id="missionModal" class="modal-overlay hidden" onclick="closeMissionModalFromOverlay(event)">
