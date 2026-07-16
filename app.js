@@ -112,6 +112,7 @@ var APP_STATE = {
   adminGallery: null,  // { missions: [...] } 관리자 갤러리 데이터 (사진 불러오기 후)
   missionCounts: {},   // { mid: 완료 인원수 } — firebase.js의 missionDone 인덱스 집계
   uploading: false,
+  captionCtx: null,    // { mode: "upload"|"edit", file: File|null, mid } 인증 글 모달 컨텍스트
 
   /* ---------- 중고등부(팀 빙고) ---------- */
   mgMode: false,       // 중고등부 화면/모달 모드 여부
@@ -157,6 +158,17 @@ function initApp() {
     });
   }
 
+  // 인증 글 입력 글자 수 카운터
+  var capInput = document.getElementById("captionInput");
+  if (capInput) {
+    capInput.addEventListener("input", function () {
+      var c = document.getElementById("captionCount");
+      if (c) c.textContent = String(capInput.value.length);
+    });
+  }
+
+  initModalScrollLock();
+
   // 서비스워커 등록 (지원 브라우저 + http(s) 환경에서만)
   // updateViaCache:"none" → SW 스크립트를 항상 새로 받아 업데이트가 확실히 반영됨
   if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
@@ -164,6 +176,159 @@ function initApp() {
       .then(function (reg) { try { reg.update(); } catch (e) {} }) // 방문 시마다 업데이트 확인
       .catch(function (err) { console.warn("서비스워커 등록 실패:", err); });
   }
+}
+
+/* ==========================================================
+   모달이 열려 있는 동안 배경(빙고판) 스크롤 잠금
+   모바일에서 관리자 패널을 스크롤하면 뒤의 빙고판이 대신 밀리던 문제를 막는다.
+   각 모달의 open/close 함수를 일일이 고치지 않도록 .modal-overlay의
+   hidden 클래스 변화를 관찰해 자동으로 잠그고 푼다.
+   ========================================================== */
+
+var _scrollLockY = 0;      // 잠글 때의 배경 스크롤 위치 (풀 때 그대로 복원)
+var _scrollLocked = false;
+
+function initModalScrollLock() {
+  var overlays = document.querySelectorAll(".modal-overlay");
+  if (!overlays.length || typeof MutationObserver !== "function") return;
+  var obs = new MutationObserver(syncBodyScrollLock);
+  Array.prototype.forEach.call(overlays, function (o) {
+    obs.observe(o, { attributes: true, attributeFilter: ["class"] });
+  });
+  syncBodyScrollLock();
+}
+
+/** 열려 있는 모달이 하나라도 있으면 배경 스크롤 잠금, 모두 닫히면 해제 */
+function syncBodyScrollLock() {
+  var anyOpen = !!document.querySelector(".modal-overlay:not(.hidden)");
+  if (anyOpen === _scrollLocked) return;
+
+  if (anyOpen) {
+    // position:fixed로 배경을 고정 — iOS 사파리는 overflow:hidden만으로는 막히지 않음
+    _scrollLockY = window.scrollY || window.pageYOffset || 0;
+    document.body.style.top = -_scrollLockY + "px";
+    document.body.classList.add("modal-open");
+    _scrollLocked = true;
+  } else {
+    document.body.classList.remove("modal-open");
+    document.body.style.top = "";
+    window.scrollTo(0, _scrollLockY);
+    _scrollLocked = false;
+  }
+}
+
+/* ==========================================================
+   좌우로 넘겨보는 슬라이드 (순위표 10명씩 / 관리자 회원목록 7명씩 공용)
+   ========================================================== */
+
+/**
+ * 목록을 페이지로 잘라 가로 스와이프 슬라이드로 만든다.
+ * @param {Array} items 전체 항목
+ * @param {number} perPage 한 페이지에 보여줄 개수
+ * @param {function(Array, number): HTMLElement} renderPage (페이지 항목들, 시작 인덱스) → 페이지 내용
+ * @param {{className?: string, startPage?: number, onPageChange?: function(number): void}} [opts]
+ * @returns {HTMLElement} 슬라이드 전체 래퍼 (트랙 + 하단 페이지 이동 바)
+ */
+function buildSlider(items, perPage, renderPage, opts) {
+  opts = opts || {};
+  var pageCount = Math.max(1, Math.ceil(items.length / perPage));
+
+  var wrap = document.createElement("div");
+  wrap.className = "slider" + (opts.className ? " " + opts.className : "");
+
+  var track = document.createElement("div");
+  track.className = "slider-track";
+  wrap.appendChild(track);
+
+  for (var p = 0; p < pageCount; p++) {
+    var start = p * perPage;
+    var page = document.createElement("div");
+    page.className = "slider-page";
+    page.appendChild(renderPage(items.slice(start, start + perPage), start));
+    track.appendChild(page);
+  }
+
+  // 페이지가 하나면 넘길 것이 없으므로 이동 바를 두지 않는다
+  if (pageCount === 1) return wrap;
+
+  var cur = Math.min(Math.max(opts.startPage || 0, 0), pageCount - 1);
+
+  var pager = document.createElement("div");
+  pager.className = "slider-pager";
+
+  var prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "slider-arrow";
+  prev.setAttribute("aria-label", "이전 페이지");
+  prev.textContent = "‹";
+  prev.addEventListener("click", function () { goTo(cur - 1); });
+  pager.appendChild(prev);
+
+  var dots = document.createElement("div");
+  dots.className = "slider-dots";
+  var dotEls = [];
+  for (var d = 0; d < pageCount; d++) {
+    var dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "slider-dot";
+    dot.setAttribute("aria-label", (d + 1) + "페이지");
+    dot.addEventListener("click", (function (i) {
+      return function () { goTo(i); };
+    })(d));
+    dots.appendChild(dot);
+    dotEls.push(dot);
+  }
+  pager.appendChild(dots);
+
+  var next = document.createElement("button");
+  next.type = "button";
+  next.className = "slider-arrow";
+  next.setAttribute("aria-label", "다음 페이지");
+  next.textContent = "›";
+  next.addEventListener("click", function () { goTo(cur + 1); });
+  pager.appendChild(next);
+
+  var label = document.createElement("span");
+  label.className = "slider-count";
+  pager.appendChild(label);
+
+  wrap.appendChild(pager);
+
+  function paint() {
+    dotEls.forEach(function (el, i) { el.classList.toggle("active", i === cur); });
+    prev.disabled = cur <= 0;
+    next.disabled = cur >= pageCount - 1;
+    label.textContent = (cur + 1) + " / " + pageCount;
+    if (typeof opts.onPageChange === "function") opts.onPageChange(cur);
+  }
+
+  function goTo(i, instant, tries) {
+    cur = Math.min(Math.max(i, 0), pageCount - 1);
+    var w = track.clientWidth;
+    if (w > 0) {
+      track.scrollTo({ left: cur * w, behavior: instant ? "auto" : "smooth" });
+    } else if ((tries || 0) < 30) {
+      // 아직 화면에 붙지 않아 폭을 못 잰 상태(clientWidth 0) → 다음 프레임에 다시 시도
+      requestAnimationFrame(function () { goTo(cur, true, (tries || 0) + 1); });
+    }
+    paint();
+  }
+
+  // 손가락으로 밀어서 넘겼을 때도 점/화살표 상태를 맞춰 준다
+  var sTimer = null;
+  track.addEventListener("scroll", function () {
+    if (sTimer) clearTimeout(sTimer);
+    sTimer = setTimeout(function () {
+      var w = track.clientWidth;
+      if (!w) return;
+      var i = Math.round(track.scrollLeft / w);
+      if (i !== cur) { cur = i; paint(); }
+    }, 80);
+  });
+
+  paint();
+  if (cur > 0) requestAnimationFrame(function () { goTo(cur, true); });
+  return wrap;
 }
 
 /* ==========================================================
@@ -674,6 +839,14 @@ window.renderGallery = function (mid, items) {
     nickEl.textContent = item.nick || "(닉네임 없음)";
     div.appendChild(nickEl);
 
+    // 올린 사람이 사진과 함께 남긴 글
+    if (item.caption && !revoked) {
+      var capEl = document.createElement("div");
+      capEl.className = "gi-caption";
+      capEl.textContent = item.caption;
+      div.appendChild(capEl);
+    }
+
     if (revoked) {
       var tag = document.createElement("div");
       tag.className = "gi-revoked-tag";
@@ -698,11 +871,15 @@ window.renderGallery = function (mid, items) {
   });
 };
 
-/** 순위 리스트 렌더링 — 빙고 줄 수 → 체크 수 내림차순 */
+/* 순위표: 한 페이지에 10명씩 — 11등부터는 옆으로 넘겨서 본다 */
+var RANK_PER_PAGE = 10;
+var _rankPage = 0; // 실시간 갱신으로 다시 그려도 보던 페이지를 유지
+
+/** 순위 리스트 렌더링 — 빙고 줄 수 → 체크 수 내림차순, 10명씩 슬라이드 */
 window.renderLeaderboard = function (entries) {
-  var list = document.getElementById("rankList");
-  if (!list) return;
-  list.innerHTML = "";
+  var box = document.getElementById("rankList");
+  if (!box) return;
+  box.innerHTML = "";
 
   var arr = (entries || []).slice();
   arr.sort(function (a, b) {
@@ -712,44 +889,63 @@ window.renderLeaderboard = function (entries) {
   });
 
   if (arr.length === 0) {
-    var li = document.createElement("li");
-    li.className = "rank-empty";
-    li.textContent = "아직 참가자가 없어요";
-    list.appendChild(li);
+    var p = document.createElement("p");
+    p.className = "rank-empty";
+    p.textContent = "아직 참가자가 없어요";
+    box.appendChild(p);
     return;
   }
 
-  var medals = ["🥇", "🥈", "🥉"];
+  // 동점 공동 순위를 전체 기준으로 먼저 계산해 둔다 (페이지가 나뉘어도 순위는 그대로)
   var prevKey = null, prevRank = 0;
-
   arr.forEach(function (e, i) {
     var key = (e.bingos || 0) + ":" + (e.checks || 0);
-    var rank = (key === prevKey) ? prevRank : i + 1; // 동점 공동 순위
-    prevKey = key; prevRank = rank;
-
-    var li = document.createElement("li");
-    if (APP_STATE.user && e.uid === APP_STATE.user.uid) li.classList.add("me");
-
-    var no = document.createElement("span");
-    no.className = "rank-no";
-    no.textContent = rank <= 3 ? medals[rank - 1] : String(rank);
-
-    var nick = document.createElement("span");
-    nick.className = "rank-nick";
-    nick.textContent = e.nick || "(닉네임 없음)";
-
-    var bingo = document.createElement("span");
-    bingo.className = "rank-bingo";
-    bingo.textContent = "빙고 " + (e.bingos || 0) + "줄";
-
-    var checks = document.createElement("span");
-    checks.className = "rank-checks";
-    checks.textContent = "체크 " + (e.checks || 0) + "개";
-
-    li.appendChild(no); li.appendChild(nick); li.appendChild(bingo); li.appendChild(checks);
-    list.appendChild(li);
+    e._rank = (key === prevKey) ? prevRank : i + 1;
+    prevKey = key; prevRank = e._rank;
   });
+
+  var maxPage = Math.max(0, Math.ceil(arr.length / RANK_PER_PAGE) - 1);
+  if (_rankPage > maxPage) _rankPage = maxPage;
+
+  box.appendChild(buildSlider(arr, RANK_PER_PAGE, function (pageItems) {
+    var ol = document.createElement("ol");
+    ol.className = "rank-list";
+    pageItems.forEach(function (e) { ol.appendChild(buildRankRow(e)); });
+    return ol;
+  }, {
+    className: "rank-slider-inner",
+    startPage: _rankPage,
+    onPageChange: function (i) { _rankPage = i; }
+  }));
 };
+
+/** 순위 한 줄 */
+function buildRankRow(e) {
+  var medals = ["🥇", "🥈", "🥉"];
+  var rank = e._rank || 0;
+
+  var li = document.createElement("li");
+  if (APP_STATE.user && e.uid === APP_STATE.user.uid) li.classList.add("me");
+
+  var no = document.createElement("span");
+  no.className = "rank-no";
+  no.textContent = rank >= 1 && rank <= 3 ? medals[rank - 1] : String(rank);
+
+  var nick = document.createElement("span");
+  nick.className = "rank-nick";
+  nick.textContent = e.nick || "(닉네임 없음)";
+
+  var bingo = document.createElement("span");
+  bingo.className = "rank-bingo";
+  bingo.textContent = "빙고 " + (e.bingos || 0) + "줄";
+
+  var checks = document.createElement("span");
+  checks.className = "rank-checks";
+  checks.textContent = "체크 " + (e.checks || 0) + "개";
+
+  li.appendChild(no); li.appendChild(nick); li.appendChild(bingo); li.appendChild(checks);
+  return li;
+}
 
 /* ==========================================================
    로그인 / 로그아웃 / 닉네임 (버튼 핸들러)
@@ -908,6 +1104,7 @@ function renderMyProof(mid) {
 
   var photos = photosOf(sub);
   if (photos.length > 0) {
+    appendCaptionBlock(box, mid); // 내가 남긴 글 + 수정 버튼
     // 내 사진들(최대 3장) 썸네일 + 장별 ✕ 삭제
     box.appendChild(buildMyPhotoThumbs(photos, function (idx) {
       if (!confirm("이 사진을 삭제할까요?" +
@@ -995,6 +1192,30 @@ function buildMyPhotoThumbs(photos, onDelete) {
   return row;
 }
 
+/** 내가 남긴 인증 글 + [글 쓰기/수정] 버튼 (사진을 올린 칸에만 표시) */
+function appendCaptionBlock(box, mid) {
+  var text = currentCaption(mid);
+
+  var wrap = document.createElement("div");
+  wrap.className = "my-caption";
+
+  if (text) {
+    var p = document.createElement("p");
+    p.className = "my-caption-text";
+    p.textContent = text;
+    wrap.appendChild(p);
+  }
+
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-ghost btn-sm my-caption-btn";
+  btn.textContent = text ? "✏️ 글 수정" : "📝 글 남기기";
+  btn.addEventListener("click", function () { openCaptionModal("edit", null); });
+  wrap.appendChild(btn);
+
+  box.appendChild(wrap);
+}
+
 /** 사진 추가 버튼(3장 미만) 또는 최대 도달 안내 + 3장 제한 안내문 */
 function appendPhotoLimitUi(box, count) {
   if (count < 3) {
@@ -1060,6 +1281,93 @@ function handlePhotoSelected(e) {
     return;
   }
 
+  // 사진과 함께 남길 글을 먼저 받고 업로드 (글은 선택 사항)
+  openCaptionModal("upload", originalFile);
+}
+
+/* ---------- 인증 글(캡션) 모달 ---------- */
+
+/** 인증 글 입력 모달 열기
+    @param {"upload"|"edit"} mode upload=사진 업로드 전 / edit=이미 올린 인증의 글 수정
+    @param {File|null} file 업로드할 원본 파일 (edit이면 null) */
+function openCaptionModal(mode, file) {
+  var mid = APP_STATE.currentMid;
+  if (mid === null) return;
+
+  APP_STATE.captionCtx = { mode: mode, file: file || null, mid: mid };
+
+  var input = document.getElementById("captionInput");
+  input.value = mode === "edit" ? currentCaption(mid) : "";
+  var count = document.getElementById("captionCount");
+  if (count) count.textContent = String(input.value.length);
+
+  var title = document.getElementById("captionTitle");
+  if (title) title.textContent = mode === "edit" ? "✏️ 인증 글 수정" : "📝 인증 글 남기기";
+  var okBtn = document.getElementById("captionOkBtn");
+  if (okBtn) okBtn.textContent = mode === "edit" ? "저장" : "올리기";
+
+  document.getElementById("captionModal").classList.remove("hidden");
+  setTimeout(function () { input.focus(); }, 100);
+}
+
+function closeCaptionModal() {
+  APP_STATE.captionCtx = null;
+  document.getElementById("captionModal").classList.add("hidden");
+}
+
+/** 지금 보고 있는 미션에 내가 남긴 글 (청년회/중고등부 공통) */
+function currentCaption(mid) {
+  if (APP_STATE.mgMode) {
+    var team = APP_STATE.mgViewTeam || MG_TEAM_CODES[0];
+    var data = (APP_STATE.mgData && APP_STATE.mgData[team]) || {};
+    var s = data.mine ? data.mine[mid] : null;
+    return (s && s.caption) || "";
+  }
+  var sub = APP_STATE.mySubs[mid];
+  return (sub && sub.caption) || "";
+}
+
+/** [올리기]/[저장] — 업로드 모드면 사진+글 업로드, 수정 모드면 글만 저장 */
+function handleCaptionConfirm() {
+  var ctx = APP_STATE.captionCtx;
+  if (!ctx) return;
+  var caption = document.getElementById("captionInput").value.trim();
+  closeCaptionModal();
+
+  if (ctx.mode === "edit") {
+    saveCaptionOnly(ctx.mid, caption);
+    return;
+  }
+  uploadPhotoWithCaption(ctx.file, ctx.mid, caption);
+}
+
+/** 글만 저장 (이미 올린 인증의 글 수정) */
+function saveCaptionOnly(mid, caption) {
+  var fn = APP_STATE.mgMode
+    ? function () { return window.fbMgSetCaption(APP_STATE.mgViewTeam, mid, caption); }
+    : function () { return window.fbSetCaption(mid, caption); };
+  if (typeof (APP_STATE.mgMode ? window.fbMgSetCaption : window.fbSetCaption) !== "function") return;
+
+  showLoading();
+  fn()
+    .then(function () {
+      hideLoading();
+      showToast(caption ? "글을 저장했어요." : "글을 지웠어요.");
+      if (APP_STATE.currentMid === mid) {
+        if (APP_STATE.mgMode) renderMgMyProof(mid); else renderMyProof(mid);
+      }
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("글 저장 실패:", err);
+      showToast("글 저장에 실패했어요. 다시 시도해 주세요.");
+    });
+}
+
+/** 사진 압축 → 업로드 (글이 있으면 함께 저장) */
+function uploadPhotoWithCaption(originalFile, mid, caption) {
+  if (!originalFile) return;
+
   APP_STATE.uploading = true;
   showLoading();
 
@@ -1071,12 +1379,12 @@ function handlePhotoSelected(e) {
         if (typeof window.fbMgUpload !== "function") {
           throw new Error("Firebase 미연결");
         }
-        return window.fbMgUpload(APP_STATE.mgViewTeam, APP_STATE.currentMid, dataUrl, originalFile);
+        return window.fbMgUpload(APP_STATE.mgViewTeam, mid, dataUrl, originalFile, caption);
       }
       if (typeof window.fbUploadSubmission !== "function") {
         throw new Error("Firebase 미연결");
       }
-      return window.fbUploadSubmission(APP_STATE.currentMid, dataUrl, originalFile);
+      return window.fbUploadSubmission(mid, dataUrl, originalFile, caption);
     })
     .then(function () {
       APP_STATE.uploading = false;
@@ -1262,9 +1570,12 @@ function closeAdminPanelFromOverlay(e) {
 /** 펼쳐 둔 회원 카드 (uid → true) — 목록이 실시간으로 다시 그려져도 펼침 상태 유지 */
 var _adminExpanded = {};
 
+/* 회원 목록: 한 페이지에 7명씩 — 나머지는 옆으로 넘겨서 본다 */
+var ADMIN_USERS_PER_PAGE = 7;
+var _adminUserPage = 0; // 실시간 갱신으로 다시 그려도 보던 페이지를 유지
+
 /** 회원 목록 렌더 (firebase.js의 fbWatchUsers가 호출)
-    카드는 기본 접힘(이름·이메일·뱃지만) → 누르면 아래로 관리 버튼이 펼쳐짐
-    (버튼을 한 줄에 늘어놓으면 카드 밖으로 넘쳐 이름이 가려졌음) */
+    7명씩 슬라이드 + 카드는 기본 접힘(이름·이메일·뱃지) → 누르면 아래로 관리 버튼이 펼쳐짐 */
 window.renderAdminUsers = function (list) {
   var box = document.getElementById("adminUserList");
   if (!box) return;
@@ -1279,178 +1590,193 @@ window.renderAdminUsers = function (list) {
     return;
   }
 
-  arr.forEach(function (u) {
-    var isMaster = MASTER_EMAILS.indexOf(u.email) !== -1;
-    var isMe = !!(APP_STATE.user && u.uid === APP_STATE.user.uid);
-    var displayNick = u.nick || u.email;
-    var expanded = _adminExpanded[u.uid] === true;
+  var maxPage = Math.max(0, Math.ceil(arr.length / ADMIN_USERS_PER_PAGE) - 1);
+  if (_adminUserPage > maxPage) _adminUserPage = maxPage;
 
-    var row = document.createElement("div");
-    row.className = "admin-user-row" + (expanded ? " expanded" : "");
-
-    /* ---- 접힌 상태에서 보이는 머리 부분 (누르면 펼침/접힘) ---- */
-    var head = document.createElement("button");
-    head.type = "button";
-    head.className = "au-head";
-    head.setAttribute("aria-expanded", expanded ? "true" : "false");
-
-    var info = document.createElement("span");
-    info.className = "au-info";
-
-    var nickEl = document.createElement("span");
-    nickEl.className = "au-nick";
-    nickEl.textContent = displayNick + (isMe ? " (나)" : "");
-    info.appendChild(nickEl);
-
-    var emailEl = document.createElement("span");
-    emailEl.className = "au-email";
-    emailEl.textContent = u.email || "";
-    info.appendChild(emailEl);
-
-    head.appendChild(info);
-
-    if (isMaster || u.isAdmin) {
-      var badge = document.createElement("span");
-      badge.className = "badge-admin";
-      badge.textContent = isMaster ? "관리자(마스터)" : "관리자";
-      head.appendChild(badge);
-    }
-    if (u.mgRole) {
-      var mgBadge = document.createElement("span");
-      mgBadge.className = "badge-mg";
-      mgBadge.textContent = "중고등부" + (u.mgTeam ? " · " + mgTeamName(u.mgTeam) : "");
-      head.appendChild(mgBadge);
-    }
-
-    var caret = document.createElement("span");
-    caret.className = "au-caret";
-    caret.textContent = "▾";
-    head.appendChild(caret);
-
-    head.addEventListener("click", (function (uid) {
-      return function () {
-        var open = _adminExpanded[uid] !== true;
-        if (open) _adminExpanded[uid] = true; else delete _adminExpanded[uid];
-        row.classList.toggle("expanded", open);
-        head.setAttribute("aria-expanded", open ? "true" : "false");
-      };
-    })(u.uid));
-
-    row.appendChild(head);
-
-    /* ---- 펼쳤을 때 보이는 관리 버튼들 ---- */
-    var actions = document.createElement("div");
-    actions.className = "au-actions";
-
-    // 미션 관리 (미니 빙고판) — 예전엔 이름 클릭이었으나 이제 옵션 버튼으로
-    var missionBtn = document.createElement("button");
-    missionBtn.type = "button";
-    missionBtn.className = "btn-grant btn-grant-mission";
-    missionBtn.textContent = "🎯 미션 관리";
-    missionBtn.addEventListener("click", (function (uid, nick) {
-      return function () { openAdminUserDetail(uid, nick); };
-    })(u.uid, displayNick));
-    actions.appendChild(missionBtn);
-
-    // 닉네임 재설정 요청 — 잘못 지은 닉네임을 회원 본인이 다시 설정하도록 요청
-    // (닉네임을 아직 정한 회원에게만, 나 자신 제외)
-    if (!isMe && u.nick) {
-      var nrBtn = document.createElement("button");
-      nrBtn.type = "button";
-      if (u.nickReset) {
-        // 이미 요청을 보낸 상태 — 취소 버튼으로 표시
-        nrBtn.className = "btn-grant btn-grant-off";
-        nrBtn.textContent = "✏️ 재설정 요청됨 (취소)";
-        nrBtn.addEventListener("click", (function (uid, nick) {
-          return function () { handleAdminCancelNickReset(uid, nick); };
-        })(u.uid, displayNick));
-      } else {
-        nrBtn.className = "btn-grant btn-grant-nick";
-        nrBtn.textContent = "✏️ 닉네임 재설정 요청";
-        nrBtn.addEventListener("click", (function (uid, nick) {
-          return function () { handleAdminRequestNickReset(uid, nick); };
-        })(u.uid, displayNick));
-      }
-      actions.appendChild(nrBtn);
-    }
-
-    // 관리자 지정/해제 (마스터는 고정)
-    if (!isMaster) {
-      if (u.isAdmin) {
-        if (!isMe) {
-          var offBtn = document.createElement("button");
-          offBtn.type = "button";
-          offBtn.className = "btn-grant btn-grant-off";
-          offBtn.textContent = "관리자 해제";
-          offBtn.addEventListener("click", (function (uid, nick) {
-            return function () { handleToggleAdmin(uid, nick, false); };
-          })(u.uid, displayNick));
-          actions.appendChild(offBtn);
-        }
-      } else {
-        var onBtn = document.createElement("button");
-        onBtn.type = "button";
-        onBtn.className = "btn-grant";
-        onBtn.textContent = "관리자 지정";
-        onBtn.addEventListener("click", (function (uid, nick) {
-          return function () { handleToggleAdmin(uid, nick, true); };
-        })(u.uid, displayNick));
-        actions.appendChild(onBtn);
-      }
-
-      // 중고등부 권한/팀 관리
-      if (u.mgRole) {
-        var teamWrap = document.createElement("span");
-        teamWrap.className = "mg-team-mini";
-        MG_TEAMS.forEach(function (t) {
-          var tb = document.createElement("button");
-          tb.type = "button";
-          tb.className = "btn-team-mini team-gender-" + t.gender + (u.mgTeam === t.code ? " active" : "");
-          tb.textContent = t.short;
-          tb.title = t.name;
-          tb.addEventListener("click", (function (uid, nick, team, cur) {
-            return function () { handleAdminSetMgTeam(uid, nick, team, cur); };
-          })(u.uid, displayNick, t.code, u.mgTeam));
-          teamWrap.appendChild(tb);
-        });
-        actions.appendChild(teamWrap);
-
-        var mgOffBtn = document.createElement("button");
-        mgOffBtn.type = "button";
-        mgOffBtn.className = "btn-grant btn-grant-off";
-        mgOffBtn.textContent = "중고등부 해제";
-        mgOffBtn.addEventListener("click", (function (uid, nick) {
-          return function () { handleToggleMgRole(uid, nick, false); };
-        })(u.uid, displayNick));
-        actions.appendChild(mgOffBtn);
-      } else {
-        var mgOnBtn = document.createElement("button");
-        mgOnBtn.type = "button";
-        mgOnBtn.className = "btn-grant btn-grant-mg";
-        mgOnBtn.textContent = "중고등부 지정";
-        mgOnBtn.addEventListener("click", (function (uid, nick) {
-          return function () { handleToggleMgRole(uid, nick, true); };
-        })(u.uid, displayNick));
-        actions.appendChild(mgOnBtn);
-      }
-    }
-
-    // 계정 삭제 (마스터/본인 제외) — 그 회원의 모든 사진·기록까지 지우는 위험 버튼
-    if (!isMaster && !isMe) {
-      var delBtn = document.createElement("button");
-      delBtn.type = "button";
-      delBtn.className = "btn-grant btn-grant-danger";
-      delBtn.textContent = "계정 삭제";
-      delBtn.addEventListener("click", (function (uid, nick) {
-        return function () { handleAdminDeleteUser(uid, nick); };
-      })(u.uid, displayNick));
-      actions.appendChild(delBtn);
-    }
-
-    row.appendChild(actions);
-    box.appendChild(row);
-  });
+  box.appendChild(buildSlider(arr, ADMIN_USERS_PER_PAGE, function (pageUsers) {
+    var page = document.createElement("div");
+    page.className = "admin-user-page";
+    pageUsers.forEach(function (u) { page.appendChild(buildAdminUserRow(u)); });
+    return page;
+  }, {
+    className: "admin-user-slider",
+    startPage: _adminUserPage,
+    onPageChange: function (i) { _adminUserPage = i; }
+  }));
 };
+
+/** 회원 카드 1개 — 머리(이름/이메일/뱃지) + 펼쳐지는 관리 버튼들 */
+function buildAdminUserRow(u) {
+  var isMaster = MASTER_EMAILS.indexOf(u.email) !== -1;
+  var isMe = !!(APP_STATE.user && u.uid === APP_STATE.user.uid);
+  var displayNick = u.nick || u.email;
+  var expanded = _adminExpanded[u.uid] === true;
+
+  var row = document.createElement("div");
+  row.className = "admin-user-row" + (expanded ? " expanded" : "");
+
+  /* ---- 접힌 상태에서 보이는 머리 부분 (누르면 펼침/접힘) ---- */
+  var head = document.createElement("button");
+  head.type = "button";
+  head.className = "au-head";
+  head.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+  var info = document.createElement("span");
+  info.className = "au-info";
+
+  var nickEl = document.createElement("span");
+  nickEl.className = "au-nick";
+  nickEl.textContent = displayNick + (isMe ? " (나)" : "");
+  info.appendChild(nickEl);
+
+  var emailEl = document.createElement("span");
+  emailEl.className = "au-email";
+  emailEl.textContent = u.email || "";
+  info.appendChild(emailEl);
+
+  head.appendChild(info);
+
+  if (isMaster || u.isAdmin) {
+    var badge = document.createElement("span");
+    badge.className = "badge-admin";
+    badge.textContent = isMaster ? "관리자(마스터)" : "관리자";
+    head.appendChild(badge);
+  }
+  if (u.mgRole) {
+    var mgBadge = document.createElement("span");
+    mgBadge.className = "badge-mg";
+    mgBadge.textContent = "중고등부" + (u.mgTeam ? " · " + mgTeamName(u.mgTeam) : "");
+    head.appendChild(mgBadge);
+  }
+
+  var caret = document.createElement("span");
+  caret.className = "au-caret";
+  caret.textContent = "▾";
+  head.appendChild(caret);
+
+  head.addEventListener("click", (function (uid) {
+    return function () {
+      var open = _adminExpanded[uid] !== true;
+      if (open) _adminExpanded[uid] = true; else delete _adminExpanded[uid];
+      row.classList.toggle("expanded", open);
+      head.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+  })(u.uid));
+
+  row.appendChild(head);
+
+  /* ---- 펼쳤을 때 보이는 관리 버튼들 ---- */
+  var actions = document.createElement("div");
+  actions.className = "au-actions";
+
+  // 미션 관리 (미니 빙고판) — 예전엔 이름 클릭이었으나 이제 옵션 버튼으로
+  var missionBtn = document.createElement("button");
+  missionBtn.type = "button";
+  missionBtn.className = "btn-grant btn-grant-mission";
+  missionBtn.textContent = "🎯 미션 관리";
+  missionBtn.addEventListener("click", (function (uid, nick) {
+    return function () { openAdminUserDetail(uid, nick); };
+  })(u.uid, displayNick));
+  actions.appendChild(missionBtn);
+
+  // 닉네임 재설정 요청 — 잘못 지은 닉네임을 회원 본인이 다시 설정하도록 요청
+  // (닉네임을 아직 정한 회원에게만, 나 자신 제외)
+  if (!isMe && u.nick) {
+    var nrBtn = document.createElement("button");
+    nrBtn.type = "button";
+    if (u.nickReset) {
+      // 이미 요청을 보낸 상태 — 취소 버튼으로 표시
+      nrBtn.className = "btn-grant btn-grant-off";
+      nrBtn.textContent = "✏️ 재설정 요청됨 (취소)";
+      nrBtn.addEventListener("click", (function (uid, nick) {
+        return function () { handleAdminCancelNickReset(uid, nick); };
+      })(u.uid, displayNick));
+    } else {
+      nrBtn.className = "btn-grant btn-grant-nick";
+      nrBtn.textContent = "✏️ 닉네임 재설정 요청";
+      nrBtn.addEventListener("click", (function (uid, nick) {
+        return function () { handleAdminRequestNickReset(uid, nick); };
+      })(u.uid, displayNick));
+    }
+    actions.appendChild(nrBtn);
+  }
+
+  // 관리자 지정/해제 (마스터는 고정)
+  if (!isMaster) {
+    if (u.isAdmin) {
+      if (!isMe) {
+        var offBtn = document.createElement("button");
+        offBtn.type = "button";
+        offBtn.className = "btn-grant btn-grant-off";
+        offBtn.textContent = "관리자 해제";
+        offBtn.addEventListener("click", (function (uid, nick) {
+          return function () { handleToggleAdmin(uid, nick, false); };
+        })(u.uid, displayNick));
+        actions.appendChild(offBtn);
+      }
+    } else {
+      var onBtn = document.createElement("button");
+      onBtn.type = "button";
+      onBtn.className = "btn-grant";
+      onBtn.textContent = "관리자 지정";
+      onBtn.addEventListener("click", (function (uid, nick) {
+        return function () { handleToggleAdmin(uid, nick, true); };
+      })(u.uid, displayNick));
+      actions.appendChild(onBtn);
+    }
+
+    // 중고등부 권한/팀 관리
+    if (u.mgRole) {
+      var teamWrap = document.createElement("span");
+      teamWrap.className = "mg-team-mini";
+      MG_TEAMS.forEach(function (t) {
+        var tb = document.createElement("button");
+        tb.type = "button";
+        tb.className = "btn-team-mini team-gender-" + t.gender + (u.mgTeam === t.code ? " active" : "");
+        tb.textContent = t.short;
+        tb.title = t.name;
+        tb.addEventListener("click", (function (uid, nick, team, cur) {
+          return function () { handleAdminSetMgTeam(uid, nick, team, cur); };
+        })(u.uid, displayNick, t.code, u.mgTeam));
+        teamWrap.appendChild(tb);
+      });
+      actions.appendChild(teamWrap);
+
+      var mgOffBtn = document.createElement("button");
+      mgOffBtn.type = "button";
+      mgOffBtn.className = "btn-grant btn-grant-off";
+      mgOffBtn.textContent = "중고등부 해제";
+      mgOffBtn.addEventListener("click", (function (uid, nick) {
+        return function () { handleToggleMgRole(uid, nick, false); };
+      })(u.uid, displayNick));
+      actions.appendChild(mgOffBtn);
+    } else {
+      var mgOnBtn = document.createElement("button");
+      mgOnBtn.type = "button";
+      mgOnBtn.className = "btn-grant btn-grant-mg";
+      mgOnBtn.textContent = "중고등부 지정";
+      mgOnBtn.addEventListener("click", (function (uid, nick) {
+        return function () { handleToggleMgRole(uid, nick, true); };
+      })(u.uid, displayNick));
+      actions.appendChild(mgOnBtn);
+    }
+  }
+
+  // 계정 삭제 (마스터/본인 제외) — 그 회원의 모든 사진·기록까지 지우는 위험 버튼
+  if (!isMaster && !isMe) {
+    var delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn-grant btn-grant-danger";
+    delBtn.textContent = "계정 삭제";
+    delBtn.addEventListener("click", (function (uid, nick) {
+      return function () { handleAdminDeleteUser(uid, nick); };
+    })(u.uid, displayNick));
+    actions.appendChild(delBtn);
+  }
+
+  row.appendChild(actions);
+  return row;
+}
 
 /** 중고등부 권한 지정/해제 */
 function handleToggleMgRole(uid, nick, on) {
@@ -1649,6 +1975,13 @@ function openAdminCell(uid, nick, mid, sub) {
   mission.className = "ac-pop-mission";
   mission.textContent = MISSIONS[mid];
   card.appendChild(mission);
+
+  if (sub && sub.caption) {
+    var cap = document.createElement("p");
+    cap.className = "ac-pop-caption";
+    cap.textContent = "📝 " + sub.caption;
+    card.appendChild(cap);
+  }
 
   var photos = photosOf(sub);
   if (photos.length > 0) {
@@ -2475,6 +2808,7 @@ function renderMgMyProof(mid) {
   }
 
   if (sub && sub.hasPhoto === true) {
+    appendCaptionBlock(box, mid); // 내가 남긴 글 + 수정 버튼
     // 사진들은 mgPhotos에서 비동기 로드 → 도착 후 썸네일/추가 버튼 렌더
     var thumbBox = document.createElement("div");
     thumbBox.className = "mg-thumb-box";
@@ -2624,6 +2958,14 @@ window.renderMgGallery = function (mid, items) {
     nickEl.className = "gi-nick";
     nickEl.textContent = item.nick || "(닉네임 없음)";
     div.appendChild(nickEl);
+
+    // 올린 사람이 사진과 함께 남긴 글
+    if (item.caption && !revoked) {
+      var capEl = document.createElement("div");
+      capEl.className = "gi-caption";
+      capEl.textContent = item.caption;
+      div.appendChild(capEl);
+    }
 
     if (revoked) {
       var tag = document.createElement("div");

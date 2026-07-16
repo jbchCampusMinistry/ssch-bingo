@@ -662,8 +662,9 @@ async function deleteFolderRecursive(path) {
    ========================================================== */
 
 /** 인증샷 업로드 — 기존 사진 뒤에 이어붙임 (3장 초과 시 MAX_PHOTOS, 재업로드 시 해제 기록 초기화)
+    caption: 사진과 함께 남기는 글 (선택 — 비우면 기존 글 유지)
     원본 파일(originalFile)은 Cloud Storage에 보존용으로 추가 저장 (best-effort — 실패해도 압축본은 저장) */
-window.fbUploadSubmission = async function (mid, dataUrl, originalFile) {
+window.fbUploadSubmission = async function (mid, dataUrl, originalFile, caption) {
   if (!currentUser) throw new Error("로그인이 필요해요.");
   const r = ref(db, "submissions/" + mid + "/" + currentUser.uid);
   const snap = await get(r);
@@ -680,14 +681,28 @@ window.fbUploadSubmission = async function (mid, dataUrl, originalFile) {
 
   photos.push(dataUrl);
   origs.push(origPath);
-  await set(r, {
+  // 새 글이 없으면 기존 글을 그대로 유지 (사진만 추가하는 경우)
+  const cap = (caption || "").trim() || (cur && cur.caption) || "";
+  const payload = {
     nick: currentNick,
     photo: photos[0],  // 대표 사진 (보드/썸네일의 기존 sub.photo 코드 호환)
     photos: photos,
     origs: origsForWrite(origs), // 각 사진의 원본 Storage 경로 (없으면 "")
     ts: Date.now(),
     revoked: false
-  });
+  };
+  if (cap) payload.caption = cap.slice(0, 200);
+  await set(r, payload);
+};
+
+/** 인증 글만 저장/수정 (사진은 그대로) — 빈 문자열이면 글 삭제 */
+window.fbSetCaption = async function (mid, text) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  const r = ref(db, "submissions/" + mid + "/" + currentUser.uid);
+  const snap = await get(r);
+  if (!snap.exists()) throw new Error("NO_SUBMISSION");
+  const cap = (text || "").trim();
+  await update(r, { caption: cap ? cap.slice(0, 200) : null }); // null = 필드 삭제
 };
 
 /** 내 인증샷 1장 삭제 — 남은 사진이 없으면 제출 노드 전체 삭제, 있으면 첫 장을 대표로 재지정
@@ -740,6 +755,7 @@ window.fbWatchGallery = function (mid) {
           nick: s.nick || "",
           photo: ps[0] || "",
           photos: ps,
+          caption: s.caption || "",
           ts: s.ts || 0,
           test: s.test === true,
           revoked: s.revoked === true,
@@ -865,7 +881,8 @@ window.fbRevoke = async function (mid, uid, comment, missionTitle) {
     revokeTs: Date.now(),
     photo: null,
     photos: null,
-    origs: null
+    origs: null,
+    caption: null // 사진과 함께 남긴 글도 정리 (RTDB는 null = 필드 삭제)
   });
   // 완료 인원 인덱스에서도 제거 (해제 = 미완료) — 대상이 오프라인이어도 카운트가 맞도록
   try {
@@ -1339,6 +1356,7 @@ window.fbMgWatchGallery = function (team, mid) {
           nick: s.nick || "",
           photo: "",
           photos: [],
+          caption: s.caption || "",
           ts: s.ts || 0,
           test: s.test === true,
           revoked: s.revoked === true,
@@ -1391,7 +1409,7 @@ window.fbMgGetPhoto = async function (team, mid, uid) {
 /** 인증샷 업로드 — 사진(mgPhotos) 먼저, 메타(mgSubmissions)는 나중에 (사진 없는 완료 순간 방지)
     기존 사진 뒤에 이어붙임 (3장 초과 시 MAX_PHOTOS)
     원본 파일(originalFile)은 Storage에 보존용으로 추가 저장, 경로는 mgOrigs에 기록 (모두 best-effort) */
-window.fbMgUpload = async function (team, mid, dataUrl, originalFile) {
+window.fbMgUpload = async function (team, mid, dataUrl, originalFile, caption) {
   if (!currentUser) throw new Error("로그인이 필요해요.");
   const pr = ref(db, "mgPhotos/" + team + "/" + mid + "/" + currentUser.uid);
   const or = ref(db, "mgOrigs/" + team + "/" + mid + "/" + currentUser.uid);
@@ -1418,13 +1436,33 @@ window.fbMgUpload = async function (team, mid, dataUrl, originalFile) {
   try {
     await set(or, origsForWrite(origs)); // 원본 경로 기록 실패해도 게임 진행에는 영향 없음
   } catch (e) { console.warn("원본 경로 기록 실패:", e); }
-  await set(ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid), {
+  const mr = ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid);
+  // 새 글이 없으면 기존 글을 그대로 유지 (사진만 추가하는 경우)
+  let prevCap = "";
+  try {
+    const mSnap = await get(mr);
+    if (mSnap.exists()) prevCap = (mSnap.val() || {}).caption || "";
+  } catch (e) { /* 못 읽어도 업로드는 계속 */ }
+  const cap = (caption || "").trim() || prevCap;
+  const meta = {
     nick: currentNick,
     hasPhoto: true,
     photoCount: photos.length,
     ts: Date.now(),
     revoked: false
-  });
+  };
+  if (cap) meta.caption = cap.slice(0, 200);
+  await set(mr, meta);
+};
+
+/** 중고등부 인증 글만 저장/수정 (사진은 그대로) — 빈 문자열이면 글 삭제 */
+window.fbMgSetCaption = async function (team, mid, text) {
+  if (!currentUser) throw new Error("로그인이 필요해요.");
+  const r = ref(db, "mgSubmissions/" + team + "/" + mid + "/" + currentUser.uid);
+  const snap = await get(r);
+  if (!snap.exists()) throw new Error("NO_SUBMISSION");
+  const cap = (text || "").trim();
+  await update(r, { caption: cap ? cap.slice(0, 200) : null }); // null = 필드 삭제
 };
 
 /** 내 인증샷 1장 삭제 — 남은 사진이 없으면 메타 먼저 지워 완료 상태부터 해제
@@ -1504,7 +1542,8 @@ window.fbMgRevoke = async function (team, mid, uid, comment, missionTitle) {
     revokeBy: currentNick,
     revokeTs: Date.now(),
     hasPhoto: false,
-    photoCount: 0
+    photoCount: 0,
+    caption: null // 사진과 함께 남긴 글도 정리 (RTDB는 null = 필드 삭제)
   });
   await remove(pr);
   try { await remove(or); } catch (e) { /* 원본 경로 기록만 남아도 무해 */ }

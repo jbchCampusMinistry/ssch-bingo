@@ -115,11 +115,12 @@
       </div>
 
       <!-- 순위 -->
+      <!-- 10명씩 한 페이지 — 11등부터는 옆으로 넘겨서 (app.js가 슬라이드 생성) -->
       <section class="rank-section">
         <h2 class="rank-title">🏆 실시간 순위</h2>
-        <ol id="rankList" class="rank-list">
-          <li class="rank-empty">아직 참가자가 없어요</li>
-        </ol>
+        <div id="rankList" class="rank-slider">
+          <p class="rank-empty">아직 참가자가 없어요</p>
+        </div>
       </section>
     </main>
 
@@ -255,7 +256,7 @@
 
       <!-- 뷰1: 회원 목록 -->
       <div id="adminUsersView">
-        <p class="modal-desc">회원을 누르면 미션 관리·권한 설정 버튼이 펼쳐져요.</p>
+        <p class="modal-desc">회원을 누르면 미션 관리·권한 설정 버튼이 펼쳐져요.<br>7명씩 보여요 — 옆으로 넘기면 다음 회원들이 나와요.</p>
         <!-- 공지 푸시 보내기 (관리자 전용 패널이므로 항상 노출) -->
         <div class="ann-send-bar">
           <button type="button" class="btn btn-primary btn-sm" onclick="openAnnounceModal()">📢 공지 보내기</button>
@@ -284,6 +285,23 @@
         <p class="au-hint">원본 ZIP은 Firebase Storage(Blaze)에 저장된 원본을 내려받습니다. 원본이 없는 사진은 건너뜁니다.<br>
           [실패 사진 정리]는 예전에 실패 처리돼 사진만 남아 있는 인증샷을 DB·원본에서 한 번에 지웁니다. (지금은 실패 처리 시 자동 삭제됩니다)</p>
         <div id="adminGalleryContent" class="ag-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- 인증 글 모달 (사진 올릴 때 / 올린 뒤 글 수정)     -->
+  <!-- ============================================ -->
+  <div id="captionModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2 class="modal-title" id="captionTitle">📝 인증 글 남기기</h2>
+      <p class="modal-desc">사진과 함께 남길 글을 적어 주세요. (선택)</p>
+      <textarea id="captionInput" class="revoke-textarea caption-textarea" rows="3" maxlength="200"
+                placeholder="예) 다 같이 모여서 즐거이 찬양했어요!"></textarea>
+      <p class="caption-count"><span id="captionCount">0</span>/200</p>
+      <div class="modal-actions">
+        <button id="captionOkBtn" class="btn btn-primary" onclick="handleCaptionConfirm()">올리기</button>
+        <button class="btn btn-ghost" onclick="closeCaptionModal()">취소</button>
       </div>
     </div>
   </div>

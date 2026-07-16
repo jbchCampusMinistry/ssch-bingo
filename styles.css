@@ -37,6 +37,14 @@ body {
 
 .hidden { display: none !important; }
 
+/* 모달이 열려 있는 동안 배경(빙고판) 고정 — 모바일에서 패널 대신 배경이 밀리는 문제 방지
+   top 값은 app.js가 현재 스크롤 위치로 채운다 */
+body.modal-open {
+  position: fixed;
+  left: 0; right: 0; width: 100%;
+  overflow: hidden;
+}
+
 /* ---------- 상단 핑크 장식 ---------- */
 .deco { position: absolute; z-index: 1; pointer-events: none; }
 .deco svg { display: block; width: 100%; height: 100%; }
@@ -338,6 +346,45 @@ body {
   font-size: 1rem; font-weight: 900;
   text-align: center; margin-bottom: 10px;
 }
+/* ---------- 가로 슬라이드 (순위표 10명씩 / 관리자 회원목록 7명씩 공용) ---------- */
+.slider { width: 100%; min-width: 0; }
+.slider-track {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;  /* 끝에서 더 밀어도 뒤 화면이 따라 움직이지 않게 */
+  scrollbar-width: none;
+}
+.slider-track::-webkit-scrollbar { display: none; }
+.slider-page {
+  flex: 0 0 100%;
+  min-width: 100%;
+  scroll-snap-align: start;
+}
+.slider-pager {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-top: 10px;
+}
+.slider-arrow {
+  width: 28px; height: 28px; flex-shrink: 0;
+  border: none; border-radius: 50%;
+  background: var(--blue); color: #fff;
+  font-size: 1rem; font-weight: 900; line-height: 1;
+  cursor: pointer;
+}
+.slider-arrow:disabled { background: #d7dde6; color: #fff; cursor: default; }
+.slider-dots { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.slider-dot {
+  width: 8px; height: 8px; padding: 0;
+  border: none; border-radius: 50%;
+  background: #cfd6e0; cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.slider-dot.active { background: var(--blue); transform: scale(1.35); }
+.slider-count { font-size: 0.75rem; font-weight: 800; color: #8a93a3; flex-shrink: 0; }
+
 .rank-list { list-style: none; }
 .rank-list li {
   display: flex; align-items: center; gap: 10px;
@@ -354,7 +401,13 @@ body {
 .rank-nick { flex: 1; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rank-bingo { font-weight: 800; color: var(--red); font-size: 0.8rem; flex-shrink: 0; }
 .rank-checks { font-weight: 600; color: var(--navy); opacity: 0.75; font-size: 0.8rem; flex-shrink: 0; }
-.rank-empty { justify-content: center; color: #888; font-size: 0.85rem; }
+.rank-empty {
+  justify-content: center; text-align: center;
+  color: #888; font-size: 0.85rem; padding: 10px 0;
+}
+/* 순위 슬라이드 — 한 페이지(10명)씩, 페이지 안에서는 세로로 줄지어 */
+.rank-slider .slider-page { padding: 0 2px; }
+.rank-slider .rank-list li { flex-shrink: 0; }
 
 /* ---------- 푸터 ---------- */
 .app-footer {
@@ -382,6 +435,8 @@ body {
   width: 100%; max-width: 420px;
   max-height: 86vh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;  /* 모달 끝까지 스크롤해도 뒤 배경으로 넘어가지 않게 */
   animation: modal-in 0.22s ease-out;
 }
 @keyframes modal-in {
@@ -565,6 +620,14 @@ body {
   padding: 6px 8px 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 사진과 함께 남긴 글 — 길면 3줄까지만 보여 준다 */
+.gallery-item .gi-caption {
+  font-size: 0.72rem; font-weight: 600; color: #55606f;
+  padding: 2px 8px 4px;
+  line-height: 1.4; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .gallery-item .gi-actions { padding: 2px 8px 8px; }
 .gallery-item.revoked { opacity: 0.45; }
 .gallery-item .gi-revoked-tag { font-size: 0.68rem; font-weight: 800; color: var(--red); padding: 0 8px 8px; }
@@ -588,34 +651,64 @@ body {
 }
 .revoke-textarea:focus { border-color: var(--red); }
 
+/* ---------- 인증 글(캡션) ---------- */
+.caption-textarea:focus { border-color: var(--blue); }
+.caption-count { margin-top: 4px; text-align: right; font-size: 0.72rem; font-weight: 700; color: #8a93a3; }
+
+/* "내 인증" 안에 보이는 내 글 + 수정 버튼 */
+.my-caption {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  margin-bottom: 10px;
+}
+.my-caption-text {
+  width: 100%;
+  background: #eef3fd;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.82rem; font-weight: 600; color: var(--navy);
+  line-height: 1.5; word-break: break-word;
+  text-align: left;
+}
+.my-caption-btn { align-self: flex-start; }
+
+/* 관리자 미션 상세 팝업의 인증 글 */
+.ac-pop-caption {
+  margin-top: 6px;
+  background: #eef3fd;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.82rem; font-weight: 600; color: var(--navy);
+  line-height: 1.5; word-break: break-word;
+}
+
 /* ---------- 관리자 패널 ---------- */
 /* 헤더의 자기 이름 — 관리자면 클릭 가능 힌트 */
 .admin-clickable { cursor: pointer; text-decoration: underline dotted; }
 
 .modal-admin { max-width: 460px; }
 
-/* 회원 목록 (모바일에서 스크롤) */
-.admin-user-list {
-  margin-top: 14px;
-  max-height: 56vh;
-  overflow-y: auto;
-  overflow-x: hidden;   /* 카드가 옆으로 새어 흰 여백이 생기지 않도록 */
+/* 회원 목록 — 7명씩 가로 슬라이드 (안쪽에서 따로 스크롤하지 않고 패널 자체가 스크롤) */
+.admin-user-list { margin-top: 14px; min-width: 0; }
+.admin-user-empty { text-align: center; color: #999; font-size: 0.85rem; padding: 14px 0; }
+
+/* 슬라이드 한 페이지 = 회원 7명 */
+.admin-user-page {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding: 0 2px;
 }
-.admin-user-empty { text-align: center; color: #999; font-size: 0.85rem; padding: 14px 0; }
 
 /* 회원 카드 — 기본은 접힘(이름·이메일·뱃지), 누르면 아래로 관리 버튼이 펼쳐짐 */
 .admin-user-row {
+  flex-shrink: 0;   /* 세로 flex 안에서 카드가 눌려 뱃지·버튼이 잘리지 않도록 */
   background: #f6f8fb;
   border-radius: 12px;
   padding: 8px 10px;
-  overflow: hidden;
 }
 .admin-user-row .au-head {
   display: flex; align-items: center; gap: 8px;
-  width: 100%;
+  width: 100%; min-height: 34px;   /* 손가락으로 누르기 편한 높이 확보 */
   background: none; border: none; padding: 0;
   font-family: inherit; text-align: left; cursor: pointer;
 }
@@ -665,7 +758,7 @@ body {
   background: var(--yellow); color: var(--navy);
   font-size: 0.68rem; font-weight: 800;
   border-radius: 999px; padding: 2px 8px;
-  white-space: nowrap;
+  white-space: nowrap; flex-shrink: 0;
 }
 /* 중고등부 권한 뱃지 (접힌 카드에서 팀까지 한눈에) */
 .badge-mg {
@@ -956,6 +1049,12 @@ body {
   .test-check-info { color: #dbe6ff; }
   .gi-test-ph { background: #333c4b; color: #98a3b6; }
   .gi-fail-ph { background: #46262a; color: var(--red); }
+  .gallery-item .gi-caption { color: #b9c4d6; }
+  .my-caption-text, .ac-pop-caption { background: #2b3342; color: #dbe6ff; }
+  .caption-count { color: #8f9bb0; }
+  .slider-dot { background: #46506180; }
+  .slider-arrow:disabled { background: #3a4354; }
+  .slider-count { color: #8f9bb0; }
 }
 
 /* ==========================================================
