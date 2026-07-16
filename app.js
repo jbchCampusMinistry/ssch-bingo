@@ -123,7 +123,8 @@ var APP_STATE = {
   captionCtx: null,    // { mode: "upload"|"edit", file: File|null, mid } 인증 글 모달 컨텍스트
   lbExcluded: {},      // { uid: true } 마스터가 순위 집계에서 제외한 회원
   lbEntries: [],       // 순위 원본 캐시 (제외 명단이 바뀌면 이걸로 다시 그림)
-  missionTexts: { yc: {}, mg: {} }, // 마스터가 바꾼 미션 문구 ({ scope: { mid: 문구 } })
+  missionTexts: { yc: {}, mg: {} }, // 바뀐 미션 문구 ({ scope: { mid: 문구 } })
+  missionEditors: {},  // { uid: true } 마스터가 미션 변경 권한을 준 회원
 
   /* ---------- 중고등부(팀 빙고) ---------- */
   mgMode: false,       // 중고등부 화면/모달 모드 여부
@@ -939,6 +940,16 @@ window.onLbExcluded = function (map) {
   if (_adminUsersCache) window.renderAdminUsers(_adminUsersCache); // 제외 뱃지/버튼 갱신
 };
 
+/** 미션 변경 권한자 명단 변경 (firebase.js가 호출) — 권한이 생기면 변경 버튼이 바로 보인다 */
+window.onMissionEditors = function (map) {
+  APP_STATE.missionEditors = map || {};
+  var editBtn = document.getElementById("missionEditBtn");
+  if (editBtn && APP_STATE.currentMid !== null) {
+    editBtn.classList.toggle("hidden", !canEditMissionsUser());
+  }
+  if (_adminUsersCache) window.renderAdminUsers(_adminUsersCache); // 권한 뱃지/버튼 갱신
+};
+
 /** 미션 문구 변경 (firebase.js가 호출) — 두 빙고판과 열려 있는 미션 모달에 반영 */
 window.onMissionTexts = function (map) {
   APP_STATE.missionTexts = map || { yc: {}, mg: {} };
@@ -1087,9 +1098,9 @@ function openMissionModal(mid) {
   document.getElementById("missionNo").textContent = "MISSION " + (mid + 1) + " / 25";
   document.getElementById("missionText").textContent = missionTitleAt(mid, APP_STATE.mgMode);
 
-  // 미션 문구 변경 버튼은 마스터 관리자에게만 보인다
+  // 미션 문구 변경 버튼 — 마스터 + 마스터가 권한을 준 회원에게만 보인다
   var editBtn = document.getElementById("missionEditBtn");
-  if (editBtn) editBtn.classList.toggle("hidden", !isMasterUser());
+  if (editBtn) editBtn.classList.toggle("hidden", !canEditMissionsUser());
 
   var gTitle = document.getElementById("galleryTitle");
   if (APP_STATE.mgMode) {
@@ -1352,7 +1363,7 @@ function hideFieldError(id) {
 }
 
 function openMissionEditModal() {
-  if (!isMasterUser() || APP_STATE.currentMid === null) return;
+  if (!canEditMissionsUser() || APP_STATE.currentMid === null) return;
   var mid = APP_STATE.currentMid;
 
   var target = document.getElementById("missionEditTarget");
@@ -1374,7 +1385,7 @@ function closeMissionEditModal() {
 
 /** [변경하고 초기화] — 문구 저장 + 그 칸의 모든 인증(사진·체크) 삭제 */
 function handleSaveMissionText() {
-  if (!isMasterUser() || APP_STATE.currentMid === null) return;
+  if (!canEditMissionsUser() || APP_STATE.currentMid === null) return;
   if (typeof window.fbSetMissionText !== "function") return;
 
   var mid = APP_STATE.currentMid;
@@ -1407,7 +1418,7 @@ function handleSaveMissionText() {
         ? "미션 내용은 60자까지예요."
         : err && err.message === "EMPTY"
           ? "미션 내용을 입력해 주세요."
-          : "변경에 실패했어요. 마스터 권한/네트워크를 확인해 주세요.");
+          : "변경에 실패했어요. 권한/네트워크를 확인해 주세요.");
     });
 }
 
@@ -1706,6 +1717,12 @@ function isMasterUser() {
   return !!(APP_STATE.user && MASTER_EMAILS.indexOf(APP_STATE.user.email) !== -1);
 }
 
+/** 미션 문구를 바꿀 수 있는지 — 마스터이거나, 마스터가 권한을 준 회원 */
+function canEditMissionsUser() {
+  if (!APP_STATE.user) return false;
+  return isMasterUser() || APP_STATE.missionEditors[APP_STATE.user.uid] === true;
+}
+
 /** 회원 목록 렌더 (firebase.js의 fbWatchUsers가 호출)
     7명씩 슬라이드 + 카드는 기본 접힘(이름·이메일·뱃지) → 누르면 아래로 관리 버튼이 펼쳐짐 */
 window.renderAdminUsers = function (list) {
@@ -1788,6 +1805,13 @@ function buildAdminUserRow(u) {
     exBadge.textContent = "순위 제외";
     head.appendChild(exBadge);
   }
+  var canEdit = APP_STATE.missionEditors[u.uid] === true;
+  if (canEdit && !isMaster) {
+    var meBadge = document.createElement("span");
+    meBadge.className = "badge-editor";
+    meBadge.textContent = "미션 변경";
+    head.appendChild(meBadge);
+  }
 
   var caret = document.createElement("span");
   caret.className = "au-caret";
@@ -1841,8 +1865,9 @@ function buildAdminUserRow(u) {
     actions.appendChild(nrBtn);
   }
 
-  // 순위 제외/복귀 — 마스터 관리자만 쓸 수 있는 권한 (마스터 본인은 원래 순위에 안 나옴)
+  // 아래 둘은 마스터 관리자만 줄 수 있는 권한 (마스터끼리는 대상이 아님)
   if (isMasterUser() && !isMaster) {
+    // 순위 제외/복귀 (마스터 본인은 원래 순위에 안 나옴)
     var exBtn = document.createElement("button");
     exBtn.type = "button";
     exBtn.className = "btn-grant " + (excluded ? "btn-grant-off" : "btn-grant-exclude");
@@ -1851,6 +1876,16 @@ function buildAdminUserRow(u) {
       return function () { handleToggleLbExclude(uid, nick, on); };
     })(u.uid, displayNick, !excluded));
     actions.appendChild(exBtn);
+
+    // 미션 변경 권한 부여/해제
+    var meBtn = document.createElement("button");
+    meBtn.type = "button";
+    meBtn.className = "btn-grant " + (canEdit ? "btn-grant-off" : "btn-grant-editor");
+    meBtn.textContent = canEdit ? "✏️ 미션 변경 권한 해제" : "✏️ 미션 변경 권한 부여";
+    meBtn.addEventListener("click", (function (uid, nick, on) {
+      return function () { handleToggleMissionEditor(uid, nick, on); };
+    })(u.uid, displayNick, !canEdit));
+    actions.appendChild(meBtn);
   }
 
   // 관리자 지정/해제 (마스터는 고정)
@@ -1949,6 +1984,29 @@ function handleToggleLbExclude(uid, nick, on) {
     .catch(function (err) {
       hideLoading();
       console.warn("순위 제외 설정 실패:", err);
+      showToast("설정에 실패했어요. 마스터 권한/네트워크를 확인해 주세요.");
+    });
+}
+
+/** 마스터 전용 — 특정 회원에게 미션 변경 권한 부여/해제 */
+function handleToggleMissionEditor(uid, nick, on) {
+  if (!isMasterUser()) return;
+  if (typeof window.fbSetMissionEditor !== "function") return;
+
+  var q = on
+    ? "“" + nick + "” 님에게 미션 변경 권한을 줄까요?\n\n미션 칸의 내용을 바꿀 수 있게 되고,\n바꾸면 그 칸의 모든 인증이 초기화돼요."
+    : "“" + nick + "” 님의 미션 변경 권한을 해제할까요?";
+  if (!confirm(q)) return;
+
+  showLoading();
+  window.fbSetMissionEditor(uid, on)
+    .then(function () {
+      hideLoading();
+      showToast(on ? "“" + nick + "” 님에게 미션 변경 권한을 줬어요." : "미션 변경 권한을 해제했어요.");
+    })
+    .catch(function (err) {
+      hideLoading();
+      console.warn("미션 변경 권한 설정 실패:", err);
       showToast("설정에 실패했어요. 마스터 권한/네트워크를 확인해 주세요.");
     });
 }

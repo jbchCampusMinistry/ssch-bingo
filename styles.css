@@ -769,6 +769,9 @@ body.modal-open {
 /* 순위 제외 (마스터 전용) */
 .btn-grant-exclude { background: #5b6472; }
 .btn-grant-exclude:hover { background: #4a5260; }
+/* 미션 변경 권한 부여 (마스터 전용) */
+.btn-grant-editor { background: #c2760f; }
+.btn-grant-editor:hover { background: #a86609; }
 
 .badge-admin {
   background: var(--yellow); color: var(--navy);
@@ -779,6 +782,13 @@ body.modal-open {
 /* 순위 제외 뱃지 (마스터가 순위 집계에서 뺀 회원) */
 .badge-excluded {
   background: #e6e9ef; color: #5b6472;
+  font-size: 0.68rem; font-weight: 800;
+  border-radius: 999px; padding: 2px 8px;
+  white-space: nowrap; flex-shrink: 0;
+}
+/* 미션 변경 권한 뱃지 */
+.badge-editor {
+  background: #fce8c8; color: #8a5205;
   font-size: 0.68rem; font-weight: 800;
   border-radius: 999px; padding: 2px 8px;
   white-space: nowrap; flex-shrink: 0;
@@ -1079,6 +1089,7 @@ body.modal-open {
   .slider-arrow:disabled { background: #3a4354; }
   .slider-count { color: #8f9bb0; }
   .badge-excluded { background: #3a4354; color: #b9c4d6; }
+  .badge-editor { background: #4a3a1c; color: #f2c47b; }
   .mission-edit-warn { background: #46262a; }
 }
 

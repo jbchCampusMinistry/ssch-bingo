@@ -92,6 +92,9 @@ let nickResetPrompted = false; // 이번 세션에서 재설정 안내 모달을
 let lbExcludedUnsub = null;  // 순위 제외 명단(lbExcluded) 리스너 해제 함수
 let lbExcluded = {};         // { uid: true } 마스터가 순위 집계에서 제외한 회원
 let missionTextsUnsub = null; // 미션 문구 변경(missionTexts) 리스너 해제 함수
+let missionDoneCache = null; // 마지막 missionDone 원본 값 (제외 명단이 바뀌면 이걸로 다시 집계)
+let missionEditorsUnsub = null; // 미션 변경 권한자(missionEditors) 리스너 해제 함수
+let missionEditors = {};     // { uid: true } 마스터가 미션 변경 권한을 준 회원
 
 /* ---------- 중고등부(팀 빙고) 상태 ----------
    팀 4개: mb(중등부 형제) / hb(고등부 형제) / ms(중등부 자매) / hs(고등부 자매) */
@@ -258,6 +261,7 @@ async function enterMain() {
   subscribeLeaderboard();
   subscribeLbExcluded();    // 마스터가 지정한 순위 제외 명단 실시간 구독
   subscribeMissionTexts();  // 마스터가 바꾼 미션 문구 실시간 구독
+  subscribeMissionEditors(); // 미션 변경 권한자 명단 실시간 구독
   subscribeMissionCounts(); // 미션별 완료 인원수(보드 배지) 실시간 구독
   subscribeNickReset(); // 관리자의 닉네임 재설정 요청 실시간 감시
   window.fbChatWatch(); // 청년회 메인 채팅 실시간 구독 시작
@@ -548,20 +552,26 @@ function syncMyMissionDone() {
 function subscribeMissionCounts() {
   if (missionDoneUnsub) { try { missionDoneUnsub(); } catch (e) {} }
   missionDoneUnsub = onValue(ref(db, "missionDone"), function (snap) {
-    var counts = {};
-    if (snap.exists()) {
-      var val = snap.val();
-      Object.keys(val).forEach(function (mid) {
-        var users = val[mid] || {};
-        var c = 0;
-        Object.keys(users).forEach(function (u) { if (users[u] === true) c++; });
-        counts[mid] = c;
-      });
-    }
-    if (typeof window.onMissionCounts === "function") window.onMissionCounts(counts);
+    missionDoneCache = snap.exists() ? (snap.val() || {}) : {};
+    emitMissionCounts();
   }, function (err) {
     console.warn("미션 카운트 구독 오류:", err);
   });
+}
+
+/** 미션별 완료 인원수 계산 → app.js (순위 제외된 회원의 사진은 세지 않는다)
+ *  missionDone 갱신 / 순위 제외 명단 갱신 양쪽에서 호출된다. */
+function emitMissionCounts() {
+  if (typeof window.onMissionCounts !== "function") return;
+  const val = missionDoneCache || {};
+  const counts = {};
+  Object.keys(val).forEach((mid) => {
+    const users = val[mid] || {};
+    let c = 0;
+    Object.keys(users).forEach((u) => { if (users[u] === true && !lbExcluded[u]) c++; });
+    counts[mid] = c;
+  });
+  window.onMissionCounts(counts);
 }
 
 function unsubscribeMySubmissions() {
@@ -842,6 +852,7 @@ function subscribeLbExcluded() {
     if (typeof window.onLbExcluded === "function") {
       window.onLbExcluded(Object.assign({}, lbExcluded));
     }
+    emitMissionCounts(); // 제외된 회원의 사진은 완료 인원수에서도 빠진다
     // 내 제외가 풀린 순간 → 내 순위를 다시 기록 (같은 값이라 건너뛰지 않도록 캐시를 비움)
     if (!first && wasExcluded && !nowExcluded) {
       lastLBKey = null;
@@ -893,6 +904,36 @@ window.fbUpdateLeaderboard = function (checks, bingos) {
    ※ missionTexts/{yc|mg}/$mid 에 저장된 문구가 있으면 app.js의 기본 미션 배열보다 우선
    ========================================================== */
 
+/** 미션 변경 권한이 있는지 — 마스터이거나, 마스터가 권한을 준 회원 */
+function canEditMissions() {
+  return !!(currentUser && (isMasterAccount() || missionEditors[currentUser.uid]));
+}
+
+/** 미션 변경 권한자 명단 실시간 구독 */
+function subscribeMissionEditors() {
+  if (missionEditorsUnsub) { try { missionEditorsUnsub(); } catch (e) {} }
+  missionEditorsUnsub = onValue(ref(db, "missionEditors"), (snap) => {
+    const map = {};
+    const val = snap.exists() ? snap.val() : null;
+    if (val && typeof val === "object") {
+      Object.keys(val).forEach((uid) => { if (val[uid] === true) map[uid] = true; });
+    }
+    missionEditors = map;
+    if (typeof window.onMissionEditors === "function") {
+      window.onMissionEditors(Object.assign({}, map));
+    }
+  }, (err) => {
+    console.warn("미션 변경 권한 명단 구독 오류:", err);
+  });
+}
+
+/** 마스터: 특정 회원에게 미션 변경 권한 부여/해제 (보안 규칙도 마스터 이메일만 허용) */
+window.fbSetMissionEditor = async function (uid, on) {
+  if (!isMasterAccount()) throw new Error("마스터 관리자만 사용할 수 있어요.");
+  if (on) await set(ref(db, "missionEditors/" + uid), true);
+  else await remove(ref(db, "missionEditors/" + uid));
+};
+
 /** 미션 문구 실시간 구독 — 마스터가 바꾸면 모든 참가자의 빙고판이 즉시 갱신된다 */
 function subscribeMissionTexts() {
   if (missionTextsUnsub) { try { missionTextsUnsub(); } catch (e) {} }
@@ -913,23 +954,56 @@ function subscribeMissionTexts() {
   });
 }
 
-/** 마스터: 미션 문구 변경 + 그 칸의 모든 인증 초기화
+/** 미션 문구 변경 + 그 칸의 모든 인증 초기화 (마스터 또는 미션 변경 권한자)
  *  바뀐 미션은 다른 미션이므로, 예전 미션으로 성공했던 사람의 사진·체크도 함께 지운다.
+ *  끝나면 해당 보드 참가자에게만 변경 공지를 자동 발송한다 (청년회 변경 → 청년회, 중고등부 변경 → 중고등부).
  *  @param {"yc"|"mg"} scope 청년회/중고등부 보드
  *  @returns {Promise<number>} 초기화된 인증 수 (안내 문구용) */
 window.fbSetMissionText = async function (scope, mid, text) {
-  if (!isMasterAccount()) throw new Error("마스터 관리자만 사용할 수 있어요.");
+  if (!canEditMissions()) throw new Error("미션 변경 권한이 없어요.");
   if (scope !== "yc" && scope !== "mg") throw new Error("잘못된 보드예요.");
   const clean = (text || "").trim();
   if (!clean) throw new Error("EMPTY");
   if (clean.length > 60) throw new Error("TOO_LONG");
 
+  // 바뀌기 전 문구 (공지에 함께 넣어 무엇이 바뀌었는지 알 수 있게)
+  const oldText = typeof window.missionTitleAt === "function"
+    ? window.missionTitleAt(mid, scope === "mg")
+    : "";
+
   // 1) 이 칸의 기존 인증부터 모두 초기화 (문구만 바뀌고 옛 인증이 남는 일이 없도록 먼저)
   const cleared = scope === "mg" ? await resetMgMissionCell(mid) : await resetYcMissionCell(mid);
   // 2) 새 문구 저장
   await set(ref(db, "missionTexts/" + scope + "/" + mid), clean);
+  // 3) 해당 보드 참가자에게만 자동 공지 (실패해도 미션 변경 자체는 이미 끝난 상태 → 막지 않음)
+  try {
+    await sendMissionChangeNotice(scope, mid, oldText, clean, cleared);
+  } catch (e) {
+    console.warn("미션 변경 공지 발송 실패:", e);
+  }
   return cleared;
 };
+
+/** 미션 변경 자동 공지 — target으로 대상이 갈린다 (yc = 청년회, mg = 중고등부 권한자) */
+async function sendMissionChangeNotice(scope, mid, oldText, newText, cleared) {
+  const where = scope === "mg" ? "중고등부" : "청년회";
+  const lines = [
+    where + " 빙고 " + (mid + 1) + "번 칸의 미션이 바뀌었어요.",
+    "",
+    "🆕 새 미션: " + newText
+  ];
+  if (oldText && oldText !== newText) lines.push("📄 이전 미션: " + oldText);
+  if (cleared > 0) {
+    lines.push("", "⚠️ 이 칸의 기존 인증 " + cleared + "건은 초기화됐어요. 새 미션으로 다시 인증해 주세요!");
+  }
+  await push(ref(db, "announcements"), {
+    title: "✏️ MISSION " + (mid + 1) + " 미션이 바뀌었어요",
+    body: lines.join("\n"),
+    target: scope, // "yc" | "mg" — Cloud Function이 이 값으로 푸시 대상을 고른다
+    by: currentNick,
+    ts: Date.now()
+  });
+}
 
 /** 청년회 한 칸 초기화 — 제출/완료 인덱스 삭제 + 원본 정리 + 대상들 순위 재계산 */
 async function resetYcMissionCell(mid) {
@@ -1958,7 +2032,10 @@ function cleanupSubscriptions() {
   if (nickResetUnsub) { try { nickResetUnsub(); } catch (e) {} nickResetUnsub = null; }
   if (lbExcludedUnsub) { try { lbExcludedUnsub(); } catch (e) {} lbExcludedUnsub = null; }
   if (missionTextsUnsub) { try { missionTextsUnsub(); } catch (e) {} missionTextsUnsub = null; }
+  if (missionEditorsUnsub) { try { missionEditorsUnsub(); } catch (e) {} missionEditorsUnsub = null; }
   lbExcluded = {};
+  missionEditors = {};
+  missionDoneCache = null;
   nickResetPrompted = false;
   myDoneCache = null;
   mySubs = {};
