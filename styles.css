@@ -497,6 +497,19 @@ body.modal-open {
 }
 .mission-text { line-height: 1.45; padding: 0 10px; }
 
+/* 미션 내용 변경 (마스터 전용) — 미션 제목 아래 작은 버튼 */
+.mission-edit-bar { display: flex; justify-content: center; margin-top: 8px; }
+.mission-edit-warn {
+  margin-top: 10px;
+  background: #fdecec;
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--red);
+  font-size: 0.78rem; font-weight: 700; line-height: 1.5;
+  word-break: keep-all;
+  text-align: left;
+}
+
 .my-proof {
   margin-top: 16px;
   background: #f6f8fb;
@@ -753,9 +766,19 @@ body.modal-open {
 .btn-grant-danger:hover { background: #c93b40; }
 .btn-grant-nick { background: #7a5cc7; }
 .btn-grant-nick:hover { background: #6a4cb5; }
+/* 순위 제외 (마스터 전용) */
+.btn-grant-exclude { background: #5b6472; }
+.btn-grant-exclude:hover { background: #4a5260; }
 
 .badge-admin {
   background: var(--yellow); color: var(--navy);
+  font-size: 0.68rem; font-weight: 800;
+  border-radius: 999px; padding: 2px 8px;
+  white-space: nowrap; flex-shrink: 0;
+}
+/* 순위 제외 뱃지 (마스터가 순위 집계에서 뺀 회원) */
+.badge-excluded {
+  background: #e6e9ef; color: #5b6472;
   font-size: 0.68rem; font-weight: 800;
   border-radius: 999px; padding: 2px 8px;
   white-space: nowrap; flex-shrink: 0;
@@ -1055,6 +1078,8 @@ body.modal-open {
   .slider-dot { background: #46506180; }
   .slider-arrow:disabled { background: #3a4354; }
   .slider-count { color: #8f9bb0; }
+  .badge-excluded { background: #3a4354; color: #b9c4d6; }
+  .mission-edit-warn { background: #46262a; }
 }
 
 /* ==========================================================
