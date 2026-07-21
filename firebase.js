@@ -33,6 +33,7 @@ import {
   ref as sRef,
   uploadBytes,
   getBlob,
+  getMetadata,
   deleteObject,
   listAll
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
@@ -610,9 +611,62 @@ function photosOf(sub) {
      압축본 저장은 반드시 계속돼야 함 — 게임이 멈추면 안 됨!
    ========================================================== */
 
-/** 원본 파일 이름용 고유 ID */
-function newPhotoId() {
-  return Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+/* ---------- 저장 경로 (미션별 폴더) ----------
+   옛 경로: originals/{uid}/yc/{mid}/{id}.jpg      ← uid가 맨 앞이라 콘솔에서 알아보기 어려움
+   새 경로: photos/mission-01_미션제목/청년회/닉네임_0721-1530_ab12ef.jpg
+            photos/mission-01_미션제목/중고등부-고등부-자매/닉네임_....jpg
+   ※ 미션 제목은 마스터가 문구를 바꾸면 달라질 수 있으므로 앞의 mission-NN 번호가 기준. */
+
+/** Storage 경로 한 조각으로 쓸 수 있게 정리 (슬래시·금지문자 제거, 공백은 하이픈) */
+function sanitizeSeg(name, max) {
+  const cleaned = String(name || "")
+    .replace(/[\/\\:*?"'<>|#\[\]\r\n\t]+/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return cleaned.slice(0, max || 24) || "무제";
+}
+
+/** 파일명용 시각 도장 MMDD-HHmm */
+function stampOf(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getMonth() + 1) + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes());
+}
+
+/** 미션별 원본 저장 경로 만들기
+    team: 중고등부면 팀 코드, 청년회면 빈 값 / tsMs·rand·ext는 마이그레이션에서 옛 파일 정보를 그대로 쓰기 위한 것 */
+function buildPhotoPath(mid, team, nick, tsMs, rand, ext) {
+  const isMg = !!team;
+  const title = typeof window.missionTitleAt === "function" ? window.missionTitleAt(mid, isMg) : "";
+  const missionSeg = "mission-" + String(Number(mid) + 1).padStart(2, "0") +
+    (title ? "_" + sanitizeSeg(title, 24) : "");
+  const groupSeg = isMg
+    ? sanitizeSeg("중고등부-" + (MG_TEAM_NAMES[team] || team), 24)
+    : "청년회";
+  const d = new Date(typeof tsMs === "number" && tsMs > 0 ? tsMs : Date.now());
+  const tail = rand || Math.random().toString(36).slice(2, 8);
+  const fileSeg = sanitizeSeg(nick, 16) + "_" + stampOf(d) + "_" + tail + "." + (ext || "jpg");
+  return "photos/" + missionSeg + "/" + groupSeg + "/" + fileSeg;
+}
+
+/** 문자열 → 짧은 고정 해시 (옛 파일명이 예상 형식이 아닐 때 파일명 꼬리로 사용) */
+function shortHash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+  return h.toString(36).slice(0, 6);
+}
+
+/** 옛 경로(originals/...) → 새 경로. 옛 파일명의 시각·랜덤값을 그대로 재사용해
+    같은 사진을 두 번 정리해도 항상 같은 새 경로가 나오게 한다 (중복 복사본 방지).
+    예상 형식이 아니면 경로 해시로 대신해 역시 항상 같은 결과가 나오도록 함 */
+function legacyToNewPath(oldPath, mid, team, nick) {
+  const p = String(oldPath || "");
+  const m = /(\d{10,})_([a-z0-9]+)\.([A-Za-z0-9]{1,5})$/.exec(p);
+  return buildPhotoPath(
+    mid, team, nick,
+    m ? Number(m[1]) : 1,             // 1 = 1970년 → 시각을 모를 때도 결과가 항상 같음
+    m ? m[2] : shortHash(p),
+    m ? m[3].toLowerCase() : "jpg"
+  );
 }
 
 /** origs 값(배열/객체/누락)을 photos와 같은 길이로 정규화 — 빈 값은 null
@@ -666,16 +720,21 @@ async function deleteOriginal(path) {
   }
 }
 
-/** 폴더 이하 모든 원본 재귀 삭제 (best-effort, 백그라운드 — 계정 삭제 시 사용) */
+/** 폴더 이하 모든 원본 재귀 삭제 (best-effort, 백그라운드) — 지운 파일 수 반환 */
 async function deleteFolderRecursive(path) {
-  if (!storage) return;
+  if (!storage) return 0;
+  let n = 0;
   try {
     const res = await listAll(sRef(storage, path));
-    await Promise.all(res.items.map((it) => deleteObject(it).catch(() => {})));
-    await Promise.all(res.prefixes.map((pre) => deleteFolderRecursive(pre.fullPath)));
+    await Promise.all(res.items.map((it) =>
+      deleteObject(it).then(() => { n++; }).catch(() => {})
+    ));
+    const sub = await Promise.all(res.prefixes.map((pre) => deleteFolderRecursive(pre.fullPath)));
+    sub.forEach((c) => { n += c; });
   } catch (e) {
     console.warn("원본 폴더 정리 실패:", path, e);
   }
+  return n;
 }
 
 /* ==========================================================
@@ -697,7 +756,7 @@ window.fbUploadSubmission = async function (mid, dataUrl, originalFile, caption)
 
   // 원본 아카이브 (Storage) — 어떤 이유로 실패해도 아래 압축본 저장은 계속
   const origPath = await uploadOriginal(
-    "originals/" + currentUser.uid + "/yc/" + mid + "/" + newPhotoId() + ".jpg",
+    buildPhotoPath(mid, "", currentNick),
     originalFile
   );
 
@@ -1397,6 +1456,114 @@ window.fbFetchOriginalBlob = async function (path) {
 };
 
 /* ==========================================================
+   window로 노출: 관리자 — 저장소 폴더 정리 (originals/{uid}/… → photos/mission-NN_…/)
+   ※ Storage에는 "이동/이름 바꾸기"가 없어 복사 → 검증 → DB 경로 갱신 순서로 처리하고,
+     옛 파일은 절대 자동으로 지우지 않는다. (한 장이라도 유실되면 안 되므로
+     관리자가 새 폴더를 눈으로 확인한 뒤 [옛 폴더 정리]를 따로 눌러 지운다.)
+   ※ 어느 단계에서 실패하든 DB는 그대로 옛 경로를 가리키므로 그냥 다시 실행하면 된다.
+   ========================================================== */
+
+/** 원본 1장을 미션별 새 폴더로 복사하고 DB의 경로를 갱신
+    task: { mid, team, uid, index, nick, oldPath }  (team: 청년회면 "", 중고등부면 팀 코드)
+    반환: { status: "moved" | "skipped" | "failed", newPath?, reason? } */
+window.fbMigrateOriginalPhoto = async function (task) {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  const oldPath = task && task.oldPath;
+  if (!storage) return { status: "failed", reason: "storage" };
+  if (typeof oldPath !== "string" || !oldPath) return { status: "skipped" };
+  if (oldPath.indexOf("photos/") === 0) return { status: "skipped", newPath: oldPath }; // 이미 정리됨
+
+  const newPath = legacyToNewPath(oldPath, task.mid, task.team, task.nick);
+
+  // 1) 옛 원본 읽기 — 실패하면 아무것도 건드리지 않고 종료 (DB는 옛 경로 그대로 → 재시도 가능)
+  let blob;
+  try {
+    blob = await getBlob(sRef(storage, oldPath));
+  } catch (e) {
+    console.warn("정리 실패(읽기):", oldPath, e);
+    return { status: "failed", reason: "read" };
+  }
+
+  // 2) 새 경로로 복사 (옛 파일은 그대로 둔다)
+  try {
+    await uploadBytes(sRef(storage, newPath), blob, { contentType: blob.type || "image/jpeg" });
+  } catch (e) {
+    console.warn("정리 실패(복사):", newPath, e);
+    return { status: "failed", reason: "write" };
+  }
+
+  // 3) 복사 검증 — 새 파일 크기가 원본과 같을 때만 DB를 바꾼다
+  try {
+    const meta = await getMetadata(sRef(storage, newPath));
+    if (blob.size > 0 && Number(meta.size) !== blob.size) {
+      return { status: "failed", reason: "verify" };
+    }
+  } catch (e) {
+    console.warn("정리 실패(검증):", newPath, e);
+    return { status: "failed", reason: "verify" };
+  }
+
+  // 4) DB 경로 교체 — 해당 사진 한 칸만 (다른 사진 기록은 건드리지 않음)
+  const base = task.team
+    ? "mgOrigs/" + task.team + "/" + task.mid + "/" + task.uid
+    : "submissions/" + task.mid + "/" + task.uid + "/origs";
+  try {
+    const patch = {};
+    patch[String(task.index)] = newPath;
+    await update(ref(db, base), patch);
+  } catch (e) {
+    console.warn("정리 실패(DB 갱신):", base, e);
+    return { status: "failed", reason: "db" }; // 복사본은 남지만 다시 실행하면 같은 경로에 덮어써짐
+  }
+
+  return { status: "moved", newPath: newPath };
+};
+
+/** 아직 옛 폴더(originals/…)를 가리키는 사진이 DB에 몇 장 남았는지 — 옛 폴더 삭제 전 안전 확인용 */
+window.fbCountLegacyOriginals = async function () {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  let n = 0;
+  const count = (p) => { if (typeof p === "string" && p.indexOf("originals/") === 0) n++; };
+
+  const [ySnap, mSnaps] = await Promise.all([
+    get(ref(db, "submissions")).catch(() => null),
+    Promise.all(MG_TEAM_CODES.map((t) => get(ref(db, "mgOrigs/" + t)).catch(() => null)))
+  ]);
+  if (ySnap && ySnap.exists()) {
+    const subs = ySnap.val() || {};
+    Object.keys(subs).forEach((mid) => {
+      const byUid = subs[mid] || {};
+      Object.keys(byUid).forEach((uid) => {
+        const s = byUid[uid] || {};
+        toOrigArray(s.origs, photosOf(s).length).forEach(count);
+      });
+    });
+  }
+  mSnaps.forEach((snap) => {
+    if (!snap || !snap.exists()) return;
+    const byMid = snap.val() || {};
+    Object.keys(byMid).forEach((mid) => {
+      const byUid = byMid[mid] || {};
+      Object.keys(byUid).forEach((uid) => {
+        const raw = byUid[uid];
+        if (!raw) return;
+        (Array.isArray(raw) ? raw : Object.keys(raw).map((k) => raw[k])).forEach(count);
+      });
+    });
+  });
+  return n;
+};
+
+/** 옛 폴더(originals/) 통째로 삭제 — 남은 참조가 하나라도 있으면 거부 (유실 방지) */
+window.fbDeleteLegacyOriginals = async function () {
+  if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
+  if (!storage) throw new Error("Storage를 쓸 수 없어요.");
+  const left = await window.fbCountLegacyOriginals();
+  if (left > 0) throw new Error("STILL_REFERENCED:" + left);
+  return { deleted: await deleteFolderRecursive("originals") };
+};
+
+/* ==========================================================
    window로 노출: 관리자 — 사진 하드 삭제 / 계정 삭제
    ========================================================== */
 
@@ -1465,7 +1632,9 @@ window.fbAdminDeletePhoto = async function (scope, mid, uid, index) {
 /** 관리자: 회원 계정 삭제 — 프로필/닉네임 예약/순위/권한/모든 제출을 멀티 경로 업데이트로 한 번에(원자적) 제거
     ※ Firebase 인증(AUTH) 계정 자체는 클라이언트 SDK로는 지울 수 없어 남는다
       → 그 사람이 다시 로그인하면 새 사용자로 취급되어 닉네임부터 다시 설정하게 됨.
-    ※ Storage 원본(originals/{uid}/...)은 삭제 후 백그라운드로 재귀 정리(best-effort). */
+    ※ Storage 원본은 DB를 지우기 전에 경로를 모아 뒀다가 백그라운드로 한 장씩 정리(best-effort).
+      (새 경로 photos/mission-.../ 는 uid로 묶여 있지 않아 폴더 통째 삭제가 불가능 —
+       옛 경로 originals/{uid}/ 는 남아 있을 수 있으니 폴더 정리도 함께 시도) */
 window.fbAdminDeleteUser = async function (uid) {
   if (!currentUser || !currentIsAdmin) throw new Error("관리자만 사용할 수 있어요.");
   if (uid === currentUser.uid) throw new Error("본인 계정은 삭제할 수 없어요.");
@@ -1477,6 +1646,35 @@ window.fbAdminDeleteUser = async function (uid) {
     throw new Error("마스터 관리자 계정은 삭제할 수 없어요.");
   }
   const nick = profile.nick || "";
+
+  // DB를 지우기 전에 이 사람의 원본 Storage 경로를 모아 둔다 (지우고 나면 찾을 방법이 없음)
+  const orphanPaths = [];
+  try {
+    const [ySnap, mSnaps] = await Promise.all([
+      get(ref(db, "submissions")).catch(() => null),
+      Promise.all(MG_TEAM_CODES.map((t) => get(ref(db, "mgOrigs/" + t)).catch(() => null)))
+    ]);
+    if (ySnap && ySnap.exists()) {
+      const subs = ySnap.val() || {};
+      Object.keys(subs).forEach((mid) => {
+        const s = (subs[mid] || {})[uid];
+        if (!s) return;
+        toOrigArray(s.origs, photosOf(s).length).forEach((p) => { if (p) orphanPaths.push(p); });
+      });
+    }
+    mSnaps.forEach((snap) => {
+      if (!snap || !snap.exists()) return;
+      const byMid = snap.val() || {};
+      Object.keys(byMid).forEach((mid) => {
+        const raw = (byMid[mid] || {})[uid];
+        if (!raw) return;
+        const arr = Array.isArray(raw) ? raw : Object.keys(raw).map((k) => raw[k]);
+        arr.forEach((p) => { if (typeof p === "string" && p) orphanPaths.push(p); });
+      });
+    });
+  } catch (e) {
+    console.warn("삭제할 원본 경로 수집 실패(계정 삭제는 계속):", e);
+  }
 
   // 멀티 경로 업데이트 (null = 삭제) — 하나라도 실패하면 전체 롤백
   const updates = {};
@@ -1499,8 +1697,9 @@ window.fbAdminDeleteUser = async function (uid) {
   });
   await update(ref(db), updates);
 
-  // Storage 원본 폴더도 백그라운드 정리 (best-effort — 규칙상 로그인 사용자면 삭제 가능)
-  deleteFolderRecursive("originals/" + uid);
+  // Storage 원본도 백그라운드 정리 (best-effort — 규칙상 로그인 사용자면 삭제 가능)
+  orphanPaths.forEach((p) => deleteOriginal(p));   // 새 경로: 한 장씩
+  deleteFolderRecursive("originals/" + uid);       // 옛 경로: 폴더 통째로
 };
 
 /* ==========================================================
@@ -1687,7 +1886,7 @@ window.fbMgUpload = async function (team, mid, dataUrl, originalFile, caption) {
 
   // 원본 아카이브 (Storage) — 어떤 이유로 실패해도 아래 압축본 저장은 계속
   const origPath = await uploadOriginal(
-    "originals/" + currentUser.uid + "/mg/" + team + "/" + mid + "/" + newPhotoId() + ".jpg",
+    buildPhotoPath(mid, team, currentNick),
     originalFile
   );
 

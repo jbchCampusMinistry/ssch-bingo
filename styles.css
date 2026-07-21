@@ -1016,6 +1016,18 @@ body.modal-open {
   background: rgba(255,255,255,0.45);
   display: flex; align-items: center; justify-content: center;
 }
+.loading-box {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+/* 오래 걸리는 작업(원본 ZIP·폴더 정리)의 진행 상황 — 없을 땐 hidden */
+.loading-msg {
+  margin: 0; padding: 8px 14px;
+  background: rgba(255,255,255,0.95);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+  font-size: 0.86rem; font-weight: 600; color: #333;
+  text-align: center; max-width: 80vw;
+}
 .spinner {
   width: 46px; height: 46px;
   border: 5px solid rgba(59,111,212,0.25);

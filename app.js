@@ -2343,6 +2343,122 @@ function handlePurgeRevokedPhotos() {
     });
 }
 
+/* ---------- 저장소 폴더 정리 (originals/{uid}/… → photos/mission-NN_…/) ----------
+   Storage에는 이동/이름 바꾸기가 없어 "복사 → 크기 검증 → DB 경로 갱신" 순서로만 처리한다.
+   옛 파일은 여기서 절대 지우지 않음 — 관리자가 새 폴더를 확인한 뒤 [옛 폴더 정리]로 따로 지운다.
+   중간에 실패해도 DB는 옛 경로 그대로라 다시 눌러 이어서 하면 된다 (같은 사진은 항상 같은 새 경로). */
+
+/** 갤러리 데이터에서 아직 옛 폴더에 있는 사진 목록 뽑기 */
+function collectLegacyOrigTasks() {
+  var missions = (APP_STATE.adminGallery && APP_STATE.adminGallery.missions) || [];
+  var tasks = [];
+  missions.forEach(function (m) {
+    m.groups.forEach(function (g) {
+      g.entries.forEach(function (entry) {
+        (entry.origs || []).forEach(function (p, i) {
+          if (typeof p !== "string" || p.indexOf("originals/") !== 0) return;
+          tasks.push({
+            mid: m.mid,
+            team: g.scope === "yc" ? "" : g.scope,   // 청년회는 빈 값
+            uid: entry.uid,
+            index: i,
+            nick: entry.nick,
+            oldPath: p
+          });
+        });
+      });
+    });
+  });
+  return tasks;
+}
+
+/** [📁 미션별 폴더로 정리] — 옛 원본을 미션별 폴더로 복사하고 DB 경로를 갱신 */
+function handleMigratePhotos() {
+  if (!APP_STATE.isAdmin) return;
+  if (typeof window.fbMigrateOriginalPhoto !== "function") return;
+  if (!APP_STATE.adminGallery) { showToast("먼저 [사진 불러오기]를 눌러 주세요."); return; }
+
+  var tasks = collectLegacyOrigTasks();
+  if (tasks.length === 0) {
+    showToast("정리할 사진이 없어요. 이미 미션별 폴더로 정리돼 있어요.");
+    return;
+  }
+  if (!confirm(
+    "원본 " + tasks.length + "장을 미션별 폴더로 복사합니다.\n" +
+    "photos/mission-01_미션제목/청년회/닉네임_….jpg\n\n" +
+    "· 옛 파일은 지우지 않아요 (사진이 사라질 위험 없음)\n" +
+    "· 앱에 보이는 사진은 전혀 영향받지 않아요\n" +
+    "· 먼저 [⬇ 원본 전체 ZIP]으로 백업해 두시길 권해요\n" +
+    "· 사진이 많으면 몇 분 걸릴 수 있어요 (창을 닫지 마세요)\n\n계속할까요?"
+  )) return;
+
+  var btn = document.getElementById("agMigrateBtn");
+  if (btn) btn.disabled = true;
+  showLoading("폴더 정리 준비 중…");
+
+  var moved = 0, skipped = 0, failed = 0;
+  var i = 0;
+  function step() {
+    if (i >= tasks.length) return Promise.resolve();
+    var t = tasks[i++];
+    setLoadingMsg("미션별 폴더로 정리 중… " + i + "/" + tasks.length +
+      (failed ? "  (실패 " + failed + ")" : ""));
+    return window.fbMigrateOriginalPhoto(t)
+      .then(function (res) {
+        if (!res || res.status === "failed") failed++;
+        else if (res.status === "moved") moved++;
+        else skipped++;
+      })
+      .catch(function () { failed++; })
+      .then(step);
+  }
+
+  step().then(function () {
+    hideLoading();
+    if (btn) btn.disabled = false;
+    showToast(
+      "정리 완료 · " + moved + "장 이동" +
+      (skipped ? " · " + skipped + "장 이미 정리됨" : "") +
+      (failed ? " · " + failed + "장 실패(다시 눌러 재시도)" : "")
+    );
+    handleAdminLoadPhotos(); // 갱신된 경로로 갤러리 새로고침
+  });
+}
+
+/** [🗑 옛 폴더 정리] — originals/ 전체 삭제. 남은 참조가 하나라도 있으면 firebase.js가 거부한다 */
+function handleDeleteLegacyFolder() {
+  if (!APP_STATE.isAdmin) return;
+  if (typeof window.fbDeleteLegacyOriginals !== "function") return;
+  if (!confirm(
+    "옛 폴더(originals/)를 통째로 삭제합니다.\n되돌릴 수 없어요.\n\n" +
+    "새 폴더(photos/)에 사진이 잘 들어갔는지 Firebase 콘솔에서\n" +
+    "먼저 확인하셨나요? 원본 ZIP 백업도 받아 두셨나요?"
+  )) return;
+  if (!confirm("정말 삭제할까요? 마지막 확인이에요.")) return;
+
+  var btn = document.getElementById("agCleanupBtn");
+  if (btn) btn.disabled = true;
+  showLoading("옛 폴더 확인 중…");
+  window.fbDeleteLegacyOriginals()
+    .then(function (res) {
+      hideLoading();
+      if (btn) btn.disabled = false;
+      showToast("옛 폴더를 정리했어요. (" + ((res && res.deleted) || 0) + "개 파일 삭제)");
+    })
+    .catch(function (err) {
+      hideLoading();
+      if (btn) btn.disabled = false;
+      var msg = (err && err.message) || "";
+      if (msg.indexOf("STILL_REFERENCED:") === 0) {
+        showToast("아직 옛 폴더를 쓰는 사진이 " + msg.split(":")[1] +
+          "장 남아 있어요. [미션별 폴더로 정리]를 먼저 끝내 주세요.");
+      } else {
+        console.warn("옛 폴더 정리 실패:", err);
+        showToast("옛 폴더 정리에 실패했어요. 네트워크/권한을 확인해 주세요.");
+      }
+    });
+}
+
 /** 관리자 갤러리 렌더 — 미션별 × 소속(청년회/중고등부 A·B팀)별 그룹 */
 function renderAdminGallery() {
   var content = document.getElementById("adminGalleryContent");
@@ -2550,7 +2666,10 @@ function downloadMissionsZip(missions, zipName) {
         });
       });
       if (count === 0) throw new Error("EMPTY");
-      return zip.generateAsync({ type: "blob" });
+      setLoadingMsg("사진 " + count + "장 · ZIP 만드는 중… 0%");
+      return zip.generateAsync({ type: "blob" }, function (meta) {
+        setLoadingMsg("사진 " + count + "장 · ZIP 만드는 중… " + Math.round(meta.percent) + "%");
+      });
     })
     .then(function (blob) {
       var url = URL.createObjectURL(blob);
@@ -2623,28 +2742,47 @@ function handleZipOriginals() {
     if (btn) { btn.disabled = false; btn.textContent = "⬇ 원본 전체 ZIP"; }
   }
   if (btn) btn.disabled = true;
-  showLoading();
+  showLoading("원본 " + tasks.length + "장 준비 중…");
 
   loadJSZip()
     .then(function (JSZip) {
       var zip = new JSZip();
       var saved = 0;
-      var i = 0;
-      // 한 장씩 순차 다운로드 (대량 병렬 요청 방지) — 실패한 장은 건너뜀
-      function next() {
-        if (i >= tasks.length) return Promise.resolve();
-        var t = tasks[i++];
-        if (btn) btn.textContent = "원본 받는 중… " + i + "/" + tasks.length;
-        return window.fbFetchOriginalBlob(t.path).then(function (blob) {
-          if (blob) { zip.file(t.zipPath, blob); saved++; }
-          else skipped++;
-          return next();
+      var pending = tasks.slice();   // 아직 못 받은 장
+      var round = 0;
+
+      // 한 장씩 순차 다운로드 (대량 병렬 요청 방지). 실패한 장은 모아 뒀다가 최대 2번 더 재시도
+      function runPass() {
+        round++;
+        var retry = [];
+        var i = 0;
+        var totalThisPass = pending.length;
+        function next() {
+          if (i >= pending.length) return Promise.resolve();
+          var t = pending[i++];
+          setLoadingMsg(
+            (round > 1 ? "실패한 원본 재시도 중(" + (round - 1) + "차)… " : "원본 받는 중… ") +
+            i + "/" + totalThisPass + "  (완료 " + saved + "/" + tasks.length + ")"
+          );
+          return window.fbFetchOriginalBlob(t.path).then(function (blob) {
+            if (blob) { zip.file(t.zipPath, blob); saved++; }
+            else retry.push(t);
+            return next();
+          });
+        }
+        return next().then(function () {
+          pending = retry;
+          if (pending.length > 0 && round < 3) return runPass();
         });
       }
-      return next().then(function () {
+
+      return runPass().then(function () {
         if (saved === 0) throw new Error("EMPTY_ORIG");
-        return zip.generateAsync({ type: "blob" }).then(function (blob) {
-          return { blob: blob, saved: saved };
+        setLoadingMsg("ZIP 파일 만드는 중… 0%");
+        return zip.generateAsync({ type: "blob" }, function (meta) {
+          setLoadingMsg("ZIP 파일 만드는 중… " + Math.round(meta.percent) + "%");
+        }).then(function (blob) {
+          return { blob: blob, saved: saved, failed: pending.length };
         });
       });
     })
@@ -2659,7 +2797,9 @@ function handleZipOriginals() {
       setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
       hideLoading();
       resetBtn();
-      showToast("원본 " + res.saved + "장 저장됨" + (skipped > 0 ? " · " + skipped + "장은 원본 없음" : ""));
+      showToast("원본 " + res.saved + "장 저장됨" +
+        (skipped > 0 ? " · " + skipped + "장은 원본 없음" : "") +
+        (res.failed > 0 ? " · " + res.failed + "장 실패(다시 시도해 주세요)" : ""));
     })
     .catch(function (err) {
       hideLoading();
@@ -3770,8 +3910,22 @@ function showToast(msg) {
 }
 window.showToast = showToast; // firebase.js에서도 사용
 
-function showLoading() { document.getElementById("loading").classList.remove("hidden"); }
-function hideLoading() { document.getElementById("loading").classList.add("hidden"); }
+function showLoading(msg) {
+  document.getElementById("loading").classList.remove("hidden");
+  setLoadingMsg(msg || "");
+}
+function hideLoading() {
+  document.getElementById("loading").classList.add("hidden");
+  setLoadingMsg("");
+}
+/** 로딩 오버레이의 진행 문구 (빈 문자열이면 숨김) — 원본 ZIP·폴더 정리처럼 오래 걸리는 작업용 */
+function setLoadingMsg(msg) {
+  var el = document.getElementById("loadingMsg");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.toggle("hidden", !msg);
+}
+window.setLoadingMsg = setLoadingMsg;
 window.showLoading = showLoading;
 window.hideLoading = hideLoading;
 

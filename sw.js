@@ -48,7 +48,7 @@ self.addEventListener("notificationclick", function (e) {
   }));
 });
 
-const CACHE_NAME = "haggye-bingo-shell-v6"; // 앱 셸을 HTTP 캐시 무시하고 받도록 변경 → 새 SW 활성화
+const CACHE_NAME = "haggye-bingo-shell-v7"; // 앱 셸을 HTTP 캐시 무시하고 받도록 변경 → 새 SW 활성화
 
 /* 미리 캐시할 앱 셸 */
 const SHELL_ASSETS = [
